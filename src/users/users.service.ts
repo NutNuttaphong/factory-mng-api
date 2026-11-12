@@ -28,17 +28,22 @@ export class UsersService {
     return user;
   }
 
-  async create(dto: { email: string; password?: string; fullName: string; roleNames: string[] }) {
+  private sanitizeUser(user: User) {
+    const { passwordHash: _passwordHash, ...safeUser } = user as User & { passwordHash?: string };
+    return safeUser;
+  }
+
+  async create(dto: { email: string; password: string; fullName: string; roleNames: string[] }) {
     const exists = await this.userRepo.findOneBy({ email: dto.email });
     if (exists) throw new BadRequestException('Email already in use');
 
-    const password = dto.password || 'FactoryMng2026!';
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(dto.password, 10);
 
     const userRoles: Role[] = [];
     for (const name of dto.roleNames) {
       const role = await this.roleRepo.findOneBy({ name });
-      if (role) userRoles.push(role);
+      if (!role) throw new BadRequestException(`Unknown role: ${name}`);
+      userRoles.push(role);
     }
 
     const user = this.userRepo.create({
@@ -49,7 +54,8 @@ export class UsersService {
       isActive: true
     });
 
-    return this.userRepo.save(user);
+    const saved = await this.userRepo.save(user);
+    return this.sanitizeUser(saved);
   }
 
   async update(id: string, dto: { email?: string; password?: string; fullName?: string; roleNames?: string[]; isActive?: boolean }) {
@@ -72,17 +78,20 @@ export class UsersService {
       const userRoles: Role[] = [];
       for (const name of dto.roleNames) {
         const role = await this.roleRepo.findOneBy({ name });
-        if (role) userRoles.push(role);
+        if (!role) throw new BadRequestException(`Unknown role: ${name}`);
+        userRoles.push(role);
       }
       user.roles = userRoles;
     }
 
-    return this.userRepo.save(user);
+    const saved = await this.userRepo.save(user);
+    return this.sanitizeUser(saved);
   }
 
   async remove(id: string) {
     const user = await this.findOne(id);
-    return this.userRepo.remove(user);
+    const removed = await this.userRepo.remove(user);
+    return this.sanitizeUser(removed);
   }
 
   async getRoles() {

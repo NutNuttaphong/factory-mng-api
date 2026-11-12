@@ -11,6 +11,7 @@ export class ProductionController {
   // --- BILL OF MATERIALS (BOM) ---
 
   @Get('boms')
+  @RequirePermissions('PRODUCT_VIEW')
   async getBOMs() {
     return this.service.findBOMs();
   }
@@ -38,6 +39,7 @@ export class ProductionController {
   // --- WORK ORDERS (WO) ---
 
   @Get('orders')
+  @RequirePermissions('PRODUCT_VIEW')
   async getWorkOrders() {
     return this.service.findWorkOrders();
   }
@@ -49,11 +51,13 @@ export class ProductionController {
   }
 
   @Get('orders/:id')
+  @RequirePermissions('PRODUCT_VIEW')
   async getWorkOrder(@Param('id') id: string) {
     return this.service.findWorkOrder(id);
   }
 
   @Get('orders/:id/requirements')
+  @RequirePermissions('PRODUCT_VIEW')
   async checkRequirements(@Param('id') id: string) {
     return this.service.checkMaterialRequirement(id);
   }

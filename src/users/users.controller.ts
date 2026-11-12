@@ -1,6 +1,49 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body } from '@nestjs/common';
+import { IsArray, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { UsersService } from './users.service';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
+
+class CreateUserDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(8)
+  password: string;
+
+  @IsString()
+  @IsNotEmpty()
+  fullName: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  roleNames: string[];
+}
+
+class UpdateUserDto {
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  fullName?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roleNames?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
 
 @Controller('users')
 export class UsersController {
@@ -32,31 +75,13 @@ export class UsersController {
 
   @Post()
   @RequirePermissions('USER_CREATE')
-  async create(
-    @Body()
-    dto: {
-      email: string;
-      password?: string;
-      fullName: string;
-      roleNames: string[];
-    },
-  ) {
+  async create(@Body() dto: CreateUserDto) {
     return this.usersService.create(dto);
   }
 
   @Patch(':id')
   @RequirePermissions('USER_UPDATE')
-  async update(
-    @Param('id') id: string,
-    @Body()
-    dto: {
-      email?: string;
-      password?: string;
-      fullName?: string;
-      roleNames?: string[];
-      isActive?: boolean;
-    },
-  ) {
+  async update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
   }
 

@@ -51,6 +51,10 @@ export class SalesService {
     customerId: string,
     itemsDto: Array<{ productId: string; quantity: number; price: number }>
   ) {
+    if (!Array.isArray(itemsDto) || itemsDto.length === 0) {
+      throw new BadRequestException('Sales order must include at least one item');
+    }
+
     const customer = await this.customerRepo.findOneBy({ id: customerId });
     if (!customer) throw new NotFoundException('Customer not found');
 
@@ -61,6 +65,13 @@ export class SalesService {
     const items: SalesOrderItem[] = [];
 
     for (const itemDto of itemsDto) {
+      if (!Number.isFinite(itemDto.quantity) || itemDto.quantity <= 0) {
+        throw new BadRequestException('Order item quantity must be greater than zero');
+      }
+      if (!Number.isFinite(itemDto.price) || itemDto.price < 0) {
+        throw new BadRequestException('Order item price cannot be negative');
+      }
+
       const product = await this.productRepo.findOneBy({ id: itemDto.productId });
       if (!product) throw new NotFoundException(`Product ${itemDto.productId} not found`);
 

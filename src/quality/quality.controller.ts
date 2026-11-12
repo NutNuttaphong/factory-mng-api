@@ -9,11 +9,13 @@ export class QualityController {
   constructor(private service: QualityService) {}
 
   @Get('inspections')
+  @RequirePermissions('REPORT_VIEW')
   async getInspections() {
     return this.service.findInspections();
   }
 
   @Get('defects')
+  @RequirePermissions('REPORT_VIEW')
   async getDefects() {
     return this.service.getDefects();
   }

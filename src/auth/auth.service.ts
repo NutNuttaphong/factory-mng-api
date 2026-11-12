@@ -13,10 +13,14 @@ export class AuthService {
   ) {}
 
   async login(email: string, password: string) {
-    const user = await this.userRepo.findOne({
-      where: { email, isActive: true },
-      relations: { roles: { permissions: true } },
-    });
+    const user = await this.userRepo
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.roles', 'roles')
+      .leftJoinAndSelect('roles.permissions', 'permissions')
+      .addSelect('user.passwordHash')
+      .where('user.email = :email', { email })
+      .andWhere('user.isActive = :isActive', { isActive: true })
+      .getOne();
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');

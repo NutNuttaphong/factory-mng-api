@@ -9,11 +9,13 @@ export class SalesController {
   constructor(private service: SalesService) {}
 
   @Get('orders')
+  @RequirePermissions('PRODUCT_VIEW')
   async getOrders() {
     return this.service.findOrders();
   }
 
   @Get('orders/:id')
+  @RequirePermissions('PRODUCT_VIEW')
   async getOrder(@Param('id') id: string) {
     return this.service.findOrder(id);
   }
@@ -28,6 +30,7 @@ export class SalesController {
   }
 
   @Patch('orders/:id/reserve')
+  @RequirePermissions('STOCK_ADJUST')
   async reserveStock(@Param('id') id: string, @CurrentUser() user: User) {
     return this.service.reserveStock(id, user);
   }
@@ -39,6 +42,7 @@ export class SalesController {
   }
 
   @Get('deliveries')
+  @RequirePermissions('PRODUCT_VIEW')
   async getDeliveries() {
     return this.service.findDeliveries();
   }

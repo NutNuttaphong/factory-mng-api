@@ -13,7 +13,7 @@ export class NotificationsController {
   }
 
   @Patch(':id/read')
-  async markRead(@Param('id') id: string) {
-    return this.service.markRead(id);
+  async markRead(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.service.markRead(id, user);
   }
 }
