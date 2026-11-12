@@ -1,12 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import * as entities from './entities';
 import { DatabaseSeedService } from './database-seed.service';
+import { buildDatabaseOptions, entityArray } from './database-config.util';
 
-const entityArray = Object.values(entities).filter(
-  (val) => typeof val === 'function',
-);
+const logger = new Logger('DatabaseModule');
 
 @Module({
   imports: [
@@ -14,48 +12,29 @@ const entityArray = Object.values(entities).filter(
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService): TypeOrmModuleOptions => {
-        const databaseUrl = configService.get<string>('DATABASE_URL')?.trim();
-        const dbType = configService.get<string>('DB_TYPE', '').trim().toLowerCase();
-        const usePostgres =
-          dbType === 'postgres' ||
-          Boolean(databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl));
+        const nodeEnv = configService.get<string>('NODE_ENV');
+        const options = buildDatabaseOptions({
+          NODE_ENV: nodeEnv,
+          DATABASE_URL: configService.get<string>('DATABASE_URL'),
+          DB_TYPE: configService.get<string>('DB_TYPE'),
+          DB_HOST: configService.get<string>('DB_HOST'),
+          DB_PORT: configService.get<string>('DB_PORT'),
+          DB_USERNAME: configService.get<string>('DB_USERNAME'),
+          DB_PASSWORD: configService.get<string>('DB_PASSWORD'),
+          DB_DATABASE: configService.get<string>('DB_DATABASE'),
+          DB_NAME: configService.get<string>('DB_NAME'),
+          DB_SSL: configService.get<string>('DB_SSL'),
+          DB_SYNCHRONIZE: configService.get<string>('DB_SYNCHRONIZE'),
+          DB_RUN_MIGRATIONS: configService.get<string>('DB_RUN_MIGRATIONS'),
+        });
 
-        if (usePostgres) {
-          const useSsl = configService.get<string>('DB_SSL', '').toLowerCase() === 'true';
-          const basePostgres: Record<string, any> = {
-            type: 'postgres',
-            entities: entityArray,
-            synchronize: true, // Note: switch to TypeORM migrations when schema stabilizes
-          };
-
-          if (useSsl) {
-            basePostgres.ssl = { rejectUnauthorized: false };
-          }
-
-          if (databaseUrl) {
-            return {
-              ...basePostgres,
-              url: databaseUrl,
-            } as TypeOrmModuleOptions;
-          }
-
-          return {
-            ...basePostgres,
-            host: configService.get<string>('DB_HOST', 'localhost'),
-            port: Number(configService.get<number>('DB_PORT', 5432)),
-            username: configService.get<string>('DB_USERNAME', 'postgres'),
-            password: configService.get<string>('DB_PASSWORD', 'postgres'),
-            database: configService.get<string>('DB_DATABASE', 'factory_mng'),
-          } as TypeOrmModuleOptions;
+        if (nodeEnv === 'production' && options.synchronize) {
+          logger.warn(
+            'Database synchronize=true is active in production. Generate/run TypeORM migrations and set DB_SYNCHRONIZE=false once schema is initialized.',
+          );
         }
 
-        return {
-          type: 'sqljs',
-          location: configService.get<string>('DB_NAME', 'db.sqlite'),
-          autoSave: true,
-          entities: entityArray,
-          synchronize: true,
-        } as TypeOrmModuleOptions;
+        return options as TypeOrmModuleOptions;
       },
     }),
     TypeOrmModule.forFeature(entityArray),

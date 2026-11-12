@@ -1,4 +1,5 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -9,7 +10,10 @@ import { BOM, BOMItem, Stock } from './entities/purchasing-inventory.entity';
 
 @Injectable()
 export class DatabaseSeedService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(DatabaseSeedService.name);
+
   constructor(
+    private readonly configService: ConfigService,
     @InjectRepository(Permission) private permRepo: Repository<Permission>,
     @InjectRepository(Role) private roleRepo: Repository<Role>,
     @InjectRepository(User) private userRepo: Repository<User>,
@@ -96,6 +100,27 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
   }
 
   private async seedUsers(roles: Record<string, Role>) {
+    const enableDemoSeed =
+      this.configService.get<string>('ENABLE_DEMO_SEED', 'true').toLowerCase() !== 'false';
+    if (!enableDemoSeed) {
+      this.logger.log('Demo user seeding skipped (ENABLE_DEMO_SEED=false).');
+      return;
+    }
+
+    const configuredSeedPassword = this.configService.get<string>('SEED_DEFAULT_PASSWORD')?.trim();
+    if (configuredSeedPassword && configuredSeedPassword.length < 8) {
+      throw new Error('SEED_DEFAULT_PASSWORD must be at least 8 characters long.');
+    }
+
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    if (!configuredSeedPassword && isProduction) {
+      this.logger.warn(
+        'SEED_DEFAULT_PASSWORD is not set in production; seeded demo accounts will use the default bootstrap password. Change account passwords or set ENABLE_DEMO_SEED=false.',
+      );
+    }
+
+    const seedPassword = configuredSeedPassword || 'FactoryMng2026!';
+
     const userSeed = [
       { email: 'superadmin@factory.com', name: 'Nuttaphong SuperAdmin', role: 'Super Admin' },
       { email: 'admin@factory.com', name: 'Somsak Admin', role: 'Admin' },
@@ -109,7 +134,7 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
       { email: 'viewer@factory.com', name: 'Sopa Viewer', role: 'Viewer' },
     ];
 
-    const passwordHash = await bcrypt.hash('FactoryMng2026!', 10);
+    const passwordHash = await bcrypt.hash(seedPassword, 10);
 
     for (const u of userSeed) {
       const exists = await this.userRepo.findOneBy({ email: u.email });

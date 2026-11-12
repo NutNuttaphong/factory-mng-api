@@ -58,6 +58,9 @@ export class User {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ default: 0 })
+  tokenVersion: number;
+
   @ManyToMany(() => Role)
   @JoinTable({
     name: 'user_roles',

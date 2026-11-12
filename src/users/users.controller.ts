@@ -2,6 +2,8 @@ import { Controller, Get, Post, Patch, Delete, Param, Body } from '@nestjs/commo
 import { IsArray, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { UsersService } from './users.service';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { User } from '../database/entities';
 
 class CreateUserDto {
   @IsEmail()
@@ -75,19 +77,19 @@ export class UsersController {
 
   @Post()
   @RequirePermissions('USER_CREATE')
-  async create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  async create(@Body() dto: CreateUserDto, @CurrentUser() currentUser: User) {
+    return this.usersService.create(dto, currentUser);
   }
 
   @Patch(':id')
   @RequirePermissions('USER_UPDATE')
-  async update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  async update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() currentUser: User) {
+    return this.usersService.update(id, dto, currentUser);
   }
 
   @Delete(':id')
   @RequirePermissions('USER_DELETE')
-  async remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser() currentUser: User) {
+    return this.usersService.remove(id, currentUser);
   }
 }

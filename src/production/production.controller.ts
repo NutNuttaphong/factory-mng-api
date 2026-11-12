@@ -1,8 +1,96 @@
 import { Controller, Get, Post, Param, Body, Patch } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { ArrayMinSize, IsArray, IsDate, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, Min, ValidateNested } from 'class-validator';
 import { ProductionService } from './production.service';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../database/entities';
+
+class BomItemDto {
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsNumber()
+  @IsPositive()
+  quantityNeeded: number;
+}
+
+class CreateBomDto {
+  @IsString()
+  @IsNotEmpty()
+  code: string;
+
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => BomItemDto)
+  items: BomItemDto[];
+}
+
+class CreatePlanDto {
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsNumber()
+  @IsPositive()
+  targetQuantity: number;
+
+  @Type(() => Date)
+  @IsDate()
+  startDate: Date;
+
+  @Type(() => Date)
+  @IsDate()
+  endDate: Date;
+}
+
+class CreateWorkOrderDto {
+  @IsOptional()
+  @IsString()
+  productionPlanId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsNumber()
+  @IsPositive()
+  quantity: number;
+
+  @IsString()
+  @IsNotEmpty()
+  assignedToId: string;
+}
+
+class IssueMaterialsDto {
+  @IsString()
+  @IsNotEmpty()
+  warehouseId: string;
+}
+
+class ReportProductionResultDto {
+  @IsNumber()
+  @Min(0)
+  qtyProduced: number;
+
+  @IsNumber()
+  @Min(0)
+  qtyDefective: number;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
 
 @Controller('production')
 export class ProductionController {
@@ -18,7 +106,7 @@ export class ProductionController {
 
   @Post('boms')
   @RequirePermissions('PRODUCT_CREATE')
-  async createBOM(@Body() dto: any) {
+  async createBOM(@Body() dto: CreateBomDto) {
     return this.service.createBOM(dto);
   }
 
@@ -32,7 +120,7 @@ export class ProductionController {
 
   @Post('plans')
   @RequirePermissions('PRODUCTION_CREATE')
-  async createPlan(@Body() dto: { productId: string; targetQuantity: number; startDate: Date; endDate: Date }) {
+  async createPlan(@Body() dto: CreatePlanDto) {
     return this.service.createPlan(dto);
   }
 
@@ -46,7 +134,7 @@ export class ProductionController {
 
   @Post('orders')
   @RequirePermissions('PRODUCTION_CREATE')
-  async createWorkOrder(@Body() dto: { productionPlanId?: string; productId: string; quantity: number; assignedToId: string }) {
+  async createWorkOrder(@Body() dto: CreateWorkOrderDto) {
     return this.service.createWorkOrder(dto);
   }
 
@@ -66,7 +154,7 @@ export class ProductionController {
   @RequirePermissions('PRODUCTION_CREATE')
   async issueMaterials(
     @Param('id') id: string,
-    @Body() body: { warehouseId: string },
+    @Body() body: IssueMaterialsDto,
     @CurrentUser() user: User
   ) {
     return this.service.issueMaterials(id, body.warehouseId, user);
@@ -82,7 +170,7 @@ export class ProductionController {
   @RequirePermissions('PRODUCTION_CREATE')
   async reportResult(
     @Param('id') id: string,
-    @Body() body: { qtyProduced: number; qtyDefective: number; notes: string },
+    @Body() body: ReportProductionResultDto,
     @CurrentUser() user: User
   ) {
     return this.service.reportResult(id, body.qtyProduced, body.qtyDefective, body.notes || '', user);

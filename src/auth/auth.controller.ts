@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Body, HttpCode, HttpStatus, NotImplementedException } from '@nestjs/common';
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -12,6 +12,16 @@ class LoginDto {
   @IsString()
   @IsNotEmpty()
   password: string;
+}
+
+class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8)
+  newPassword: string;
 }
 
 @Controller('auth')
@@ -34,12 +44,18 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  async logout() {
-    return { status: 'success', message: 'Logged out successfully' };
+  async logout(@CurrentUser() user: User) {
+    return this.authService.logout(user.id);
   }
 
   @Get('me')
   async me(@CurrentUser() user: User) {
     return this.authService.getMe(user.id);
+  }
+
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  async changePassword(@CurrentUser() user: User, @Body() body: ChangePasswordDto) {
+    return this.authService.changePassword(user.id, body.currentPassword, body.newPassword);
   }
 }

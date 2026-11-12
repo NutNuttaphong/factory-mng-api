@@ -76,12 +76,6 @@ export class PurchasingService {
       throw new BadRequestException('Purchase request must include at least one item');
     }
 
-    const prCount = await this.prRepo.count();
-    const code = `PR-2026-${String(prCount + 1).padStart(5, '0')}`;
-
-    let totalAmount = 0;
-    const items: PurchaseRequestItem[] = [];
-
     for (const itemDto of itemsDto) {
       if (!Number.isFinite(itemDto.quantity) || itemDto.quantity <= 0) {
         throw new BadRequestException('Item quantity must be greater than zero');
@@ -89,7 +83,15 @@ export class PurchasingService {
       if (!Number.isFinite(itemDto.estimatedPrice) || itemDto.estimatedPrice < 0) {
         throw new BadRequestException('Item estimated price cannot be negative');
       }
+    }
 
+    const prCount = await this.prRepo.count();
+    const code = `PR-2026-${String(prCount + 1).padStart(5, '0')}`;
+
+    let totalAmount = 0;
+    const items: PurchaseRequestItem[] = [];
+
+    for (const itemDto of itemsDto) {
       const product = await this.productRepo.findOneBy({ id: itemDto.productId });
       if (!product) throw new NotFoundException(`Product ${itemDto.productId} not found`);
 

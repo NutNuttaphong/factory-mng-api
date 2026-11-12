@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -31,7 +31,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const payload = { email: user.email, sub: user.id };
+    const payload = { email: user.email, sub: user.id, tokenVersion: user.tokenVersion ?? 0 };
     const accessToken = this.jwtService.sign(payload);
 
     // Extract flat permission list
@@ -78,5 +78,44 @@ export class AuthService {
       roles: user.roles.map((r) => r.name),
       permissions: Array.from(permissions),
     };
+  }
+
+  async logout(userId: string) {
+    await this.userRepo.increment({ id: userId }, 'tokenVersion', 1);
+    return { status: 'success', message: 'Logged out successfully' };
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.userRepo
+      .createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .where('user.id = :id', { id: userId })
+      .andWhere('user.isActive = :isActive', { isActive: true })
+      .getOne();
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    if (newPassword === currentPassword) {
+      throw new BadRequestException('New password must be different from current password');
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+    await this.userRepo.save(user);
+
+    const accessToken = this.jwtService.sign({
+      email: user.email,
+      sub: user.id,
+      tokenVersion: user.tokenVersion,
+    });
+
+    return { status: 'success', message: 'Password changed successfully', accessToken };
   }
 }

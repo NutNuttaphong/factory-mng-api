@@ -1,8 +1,60 @@
 import { Controller, Get, Post, Body, Param, Patch } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { ArrayMinSize, IsArray, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, Min, ValidateNested } from 'class-validator';
 import { PurchasingService } from './purchasing.service';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { User } from '../database/entities';
+
+class PurchaseRequestItemDto {
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsNumber()
+  @IsPositive()
+  quantity: number;
+
+  @IsNumber()
+  @Min(0)
+  estimatedPrice: number;
+}
+
+class CreatePurchaseRequestDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PurchaseRequestItemDto)
+  items: PurchaseRequestItemDto[];
+}
+
+class ApprovalDecisionDto {
+  @IsOptional()
+  @IsString()
+  comment?: string;
+}
+
+class GoodsReceiptItemDto {
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @IsNumber()
+  @Min(0)
+  quantityReceived: number;
+}
+
+class CreateGoodsReceiptDto {
+  @IsString()
+  @IsNotEmpty()
+  poId: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => GoodsReceiptItemDto)
+  items: GoodsReceiptItemDto[];
+}
 
 @Controller('purchasing')
 export class PurchasingController {
@@ -24,10 +76,7 @@ export class PurchasingController {
 
   @Post('requests')
   @RequirePermissions('PURCHASE_CREATE')
-  async createPR(
-    @CurrentUser() user: User,
-    @Body() body: { items: Array<{ productId: string; quantity: number; estimatedPrice: number }> }
-  ) {
+  async createPR(@CurrentUser() user: User, @Body() body: CreatePurchaseRequestDto) {
     return this.service.createPR(user, body.items);
   }
 
@@ -41,7 +90,7 @@ export class PurchasingController {
   @RequirePermissions('PURCHASE_APPROVE')
   async approvePR(
     @Param('id') id: string,
-    @Body() body: { comment: string },
+    @Body() body: ApprovalDecisionDto,
     @CurrentUser() user: User
   ) {
     return this.service.approvePR(id, body.comment || 'Approved', user);
@@ -51,10 +100,10 @@ export class PurchasingController {
   @RequirePermissions('PURCHASE_APPROVE')
   async rejectPR(
     @Param('id') id: string,
-    @Body() body: { comment: string },
+    @Body() body: ApprovalDecisionDto,
     @CurrentUser() user: User
   ) {
-    return this.service.rejectPR(id, body.comment, user);
+    return this.service.rejectPR(id, body.comment || 'Rejected', user);
   }
 
   @Get('requests/:id/history')
@@ -87,10 +136,7 @@ export class PurchasingController {
 
   @Post('receipts')
   @RequirePermissions('PURCHASE_CREATE')
-  async createGR(
-    @CurrentUser() user: User,
-    @Body() body: { poId: string; items: Array<{ productId: string; quantityReceived: number }> }
-  ) {
+  async createGR(@CurrentUser() user: User, @Body() body: CreateGoodsReceiptDto) {
     return this.service.createGR(body.poId, user.id, body.items);
   }
 }

@@ -1,18 +1,23 @@
 import './polyfill';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { InMemoryRateLimiter, parseTrustProxy, resolveClientIp } from './common/security.util';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 20;
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const loginLimiter = new InMemoryRateLimiter(LOGIN_WINDOW_MS, 20);
+const changePasswordLimiter = new InMemoryRateLimiter(LOGIN_WINDOW_MS, 10);
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
 
   const expressApp = app.getHttpAdapter().getInstance();
   if (typeof expressApp?.disable === 'function') {
     expressApp.disable('x-powered-by');
+  }
+  if (typeof expressApp?.set === 'function') {
+    expressApp.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV));
   }
 
   // Baseline security headers without extra runtime dependencies
@@ -25,43 +30,36 @@ async function bootstrap() {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
 
-    // Simple per-IP rate limiting for login endpoint
-    if (req.method === 'POST' && req.path === '/api/auth/login') {
-      const now = Date.now();
-      if (loginAttempts.size > 1000) {
-        for (const [key, entry] of loginAttempts.entries()) {
-          if (entry.resetAt <= now) loginAttempts.delete(key);
-        }
-      }
-      const ip = String(req.headers['x-forwarded-for'] || req.ip || 'unknown').split(',')[0].trim();
-      const record = loginAttempts.get(ip);
-      if (!record || record.resetAt <= now) {
-        loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
-      } else {
-        record.count += 1;
-        if (record.count > LOGIN_MAX_ATTEMPTS) {
-          res.status(429).json({
-            statusCode: 429,
-            message: 'Too many login attempts. Please try again later.',
-          });
-          return;
-        }
+    // Proxy-aware per-IP rate limiting for authentication endpoints
+    if (req.method === 'POST' && (req.path === '/api/auth/login' || req.path === '/api/auth/change-password')) {
+      const limiter = req.path === '/api/auth/login' ? loginLimiter : changePasswordLimiter;
+      const ip = resolveClientIp(req);
+      const result = limiter.consume(ip);
+      if (!result.allowed) {
+        res.setHeader('Retry-After', String(result.retryAfterSeconds));
+        res.status(429).json({
+          statusCode: 429,
+          message: 'Too many authentication attempts. Please try again later.',
+        });
+        return;
       }
     }
     next();
   });
 
-  // Configure CORS (use CORS_ORIGIN allowlist when provided)
+  // Configure CORS (use CORS_ORIGIN allowlist; do not expose wildcard CORS in production)
   const rawCorsOrigins = process.env.CORS_ORIGIN?.trim();
   const allowedOrigins = rawCorsOrigins
     ? rawCorsOrigins.split(',').map((origin) => origin.trim()).filter(Boolean)
     : null;
 
-  app.enableCors(
-    allowedOrigins && allowedOrigins.length > 0
-      ? { origin: allowedOrigins, credentials: true }
-      : undefined,
-  );
+  if (allowedOrigins && allowedOrigins.length > 0) {
+    app.enableCors({ origin: allowedOrigins, credentials: true });
+  } else if (process.env.NODE_ENV === 'production') {
+    logger.warn('CORS_ORIGIN is not set in production; cross-origin browser requests are disabled.');
+  } else {
+    app.enableCors();
+  }
 
   // Set global prefix for API endpoints
   app.setGlobalPrefix('api');

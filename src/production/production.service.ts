@@ -46,6 +46,15 @@ export class ProductionService {
   }
 
   async createBOM(dto: { code: string; productId: string; description?: string; items: Array<{ productId: string; quantityNeeded: number }> }) {
+    if (!Array.isArray(dto.items) || dto.items.length === 0) {
+      throw new BadRequestException('BOM must include at least one component item');
+    }
+    for (const itemDto of dto.items) {
+      if (!Number.isFinite(itemDto.quantityNeeded) || itemDto.quantityNeeded <= 0) {
+        throw new BadRequestException('BOM component quantityNeeded must be greater than zero');
+      }
+    }
+
     const product = await this.productRepo.findOneBy({ id: dto.productId });
     if (!product) throw new NotFoundException('Finished product not found');
 
@@ -86,6 +95,13 @@ export class ProductionService {
   }
 
   async createPlan(dto: { productId: string; targetQuantity: number; startDate: Date; endDate: Date }) {
+    if (!Number.isFinite(dto.targetQuantity) || dto.targetQuantity <= 0) {
+      throw new BadRequestException('Target quantity must be greater than zero');
+    }
+    if (new Date(dto.endDate) < new Date(dto.startDate)) {
+      throw new BadRequestException('Plan endDate cannot be earlier than startDate');
+    }
+
     const product = await this.productRepo.findOneBy({ id: dto.productId });
     if (!product) throw new NotFoundException('Product not found');
 
@@ -133,6 +149,10 @@ export class ProductionService {
   }
 
   async createWorkOrder(dto: { productionPlanId?: string; productId: string; quantity: number; assignedToId: string }) {
+    if (!Number.isFinite(dto.quantity) || dto.quantity <= 0) {
+      throw new BadRequestException('Work order quantity must be greater than zero');
+    }
+
     const product = await this.productRepo.findOneBy({ id: dto.productId });
     const assignedTo = await this.userRepo.findOne({
       where: [
@@ -313,6 +333,10 @@ export class ProductionService {
   // --- REPORT RESULT (SUBMIT TO QA) ---
 
   async reportResult(woId: string, qtyProduced: number, qtyDefective: number, notes: string, user: User) {
+    if (!Number.isFinite(qtyProduced) || qtyProduced < 0 || !Number.isFinite(qtyDefective) || qtyDefective < 0) {
+      throw new BadRequestException('Production quantities cannot be negative');
+    }
+
     const wo = await this.findWorkOrder(woId);
     if (wo.status !== WorkOrderStatus.IN_PRODUCTION) {
       throw new BadRequestException('Can only report results for orders currently IN_PRODUCTION');

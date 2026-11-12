@@ -20,7 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; email: string }) {
+  async validate(payload: { sub: string; email: string; tokenVersion?: number }) {
     const user = await this.userRepo.findOne({
       where: { id: payload.sub, isActive: true },
       relations: { roles: { permissions: true } },
@@ -28,6 +28,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!user) {
       throw new UnauthorizedException('User not found or inactive');
+    }
+
+    if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
+      throw new UnauthorizedException('Token has been revoked');
     }
 
     return user;
