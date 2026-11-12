@@ -1,5 +1,10 @@
 import * as mongoose from 'mongoose';
-import { resolveMongoUri, resolveMongoConnectionOptions } from './database-config.util';
+import {
+  resolveMongoUri,
+  resolveMongoConnectionOptions,
+  resolveMongoIdleDisconnectMs,
+} from './database-config.util';
+import { MongoLifecycleService } from './mongo-lifecycle.service';
 import { UserSchema, StockSchema } from './entities';
 
 describe('MongoDB Database Configuration & Schemas', () => {
@@ -52,19 +57,85 @@ describe('MongoDB Database Configuration & Schemas', () => {
         NODE_ENV: 'production',
         MONGO_URL: 'mongodb://mongo:secret@mongodb.railway.internal:27017',
       }),
-    ).toEqual({
-      uri: 'mongodb://mongo:secret@mongodb.railway.internal:27017',
-      dbName: 'factory_mng',
-    });
-
-    expect(
-      resolveMongoConnectionOptions({
-        NODE_ENV: 'production',
-        MONGODB_URI: 'mongodb://mongo:secret@mongodb.railway.internal:27017/custom_erp',
+    ).toEqual(
+      expect.objectContaining({
+        uri: 'mongodb://mongo:secret@mongodb.railway.internal:27017',
+        dbName: 'factory_mng',
+        serverMonitoringMode: 'poll',
+        minPoolSize: 0,
       }),
-    ).toEqual({
-      uri: 'mongodb://mongo:secret@mongodb.railway.internal:27017/custom_erp',
+    );
+
+    const custom = resolveMongoConnectionOptions({
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://mongo:secret@mongodb.railway.internal:27017/custom_erp',
     });
+    expect(custom.uri).toBe('mongodb://mongo:secret@mongodb.railway.internal:27017/custom_erp');
+    expect(custom.dbName).toBeUndefined();
+  });
+
+  it('resolves idle disconnect timeout defaults for production and overrides', () => {
+    expect(resolveMongoIdleDisconnectMs({ NODE_ENV: 'production' })).toBe(180000);
+    expect(resolveMongoIdleDisconnectMs({ NODE_ENV: 'development' })).toBe(0);
+    expect(resolveMongoIdleDisconnectMs({ NODE_ENV: 'production', MONGO_IDLE_DISCONNECT_MS: '0' })).toBe(0);
+    expect(
+      resolveMongoIdleDisconnectMs({ NODE_ENV: 'production', MONGO_IDLE_DISCONNECT_MS: 'false' }),
+    ).toBe(0);
+    expect(
+      resolveMongoIdleDisconnectMs({ NODE_ENV: 'development', MONGO_IDLE_DISCONNECT_MS: '45000' }),
+    ).toBe(45000);
+  });
+
+  it('disconnects idle MongoDB connection and reconnects safely on concurrent requests', async () => {
+    jest.useFakeTimers();
+    try {
+      const mockConnection = {
+        readyState: 1,
+        close: jest.fn().mockImplementation(async () => {
+          mockConnection.readyState = 0;
+        }),
+        openUri: jest.fn().mockImplementation(async () => {
+          mockConnection.readyState = 1;
+          return mockConnection;
+        }),
+        asPromise: jest.fn().mockResolvedValue(undefined),
+      };
+      const mockConfig = {
+        get: (key: string) =>
+          ({
+            NODE_ENV: 'production',
+            MONGO_URL: 'mongodb://mongo:secret@mongodb.railway.internal:27017',
+            MONGO_IDLE_DISCONNECT_MS: '5000',
+          })[key],
+      };
+
+      const lifecycle = new MongoLifecycleService(mockConnection as any, mockConfig as any);
+      lifecycle.onApplicationBootstrap();
+
+      // Advance past idle threshold -> connection closes cleanly
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(mockConnection.close).toHaveBeenCalledTimes(1);
+      expect(mockConnection.readyState).toBe(0);
+
+      // Concurrent incoming requests trigger a single openUri reconnect
+      await Promise.all([lifecycle.acquireRequest(), lifecycle.acquireRequest()]);
+      expect(mockConnection.openUri).toHaveBeenCalledTimes(1);
+      expect(mockConnection.readyState).toBe(1);
+
+      // While 1 request remains active, idle timer must NOT close connection
+      lifecycle.releaseRequest();
+      await jest.advanceTimersByTimeAsync(10000);
+      expect(mockConnection.close).toHaveBeenCalledTimes(1);
+
+      // Final request finishes -> idle timer fires and closes again
+      lifecycle.releaseRequest();
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(mockConnection.close).toHaveBeenCalledTimes(2);
+
+      lifecycle.onModuleDestroy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('strips passwordHash, tokenVersion, _id, and __v on User JSON serialization', () => {

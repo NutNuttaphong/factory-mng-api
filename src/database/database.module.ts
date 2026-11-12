@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DatabaseSeedService } from './database-seed.service';
-import { resolveMongoConnectionOptions } from './database-config.util';
+import { MongoLifecycleService } from './mongo-lifecycle.service';
+import { MongoWakeupMiddleware } from './mongo-wakeup.middleware';
+import { readMongoEnv, resolveMongoConnectionOptions } from './database-config.util';
 import {
   Permission,
   PermissionSchema,
@@ -99,24 +101,11 @@ export const MONGOOSE_FEATURES = [
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
-        resolveMongoConnectionOptions({
-          NODE_ENV: configService.get<string>('NODE_ENV'),
-          MONGODB_URI: configService.get<string>('MONGODB_URI'),
-          MONGO_URL: configService.get<string>('MONGO_URL'),
-          DATABASE_URL: configService.get<string>('DATABASE_URL'),
-          MONGO_DB_NAME: configService.get<string>('MONGO_DB_NAME'),
-          MONGOHOST: configService.get<string>('MONGOHOST'),
-          MONGOPORT: configService.get<string>('MONGOPORT'),
-          MONGOUSER: configService.get<string>('MONGOUSER'),
-          MONGOPASSWORD: configService.get<string>('MONGOPASSWORD'),
-          MONGODATABASE: configService.get<string>('MONGODATABASE'),
-          MONGO_INITDB_ROOT_USERNAME: configService.get<string>('MONGO_INITDB_ROOT_USERNAME'),
-          MONGO_INITDB_ROOT_PASSWORD: configService.get<string>('MONGO_INITDB_ROOT_PASSWORD'),
-        }),
+        resolveMongoConnectionOptions(readMongoEnv((key) => configService.get<string>(key))),
     }),
     MongooseModule.forFeature(MONGOOSE_FEATURES),
   ],
-  providers: [DatabaseSeedService],
-  exports: [MongooseModule, DatabaseSeedService],
+  providers: [DatabaseSeedService, MongoLifecycleService, MongoWakeupMiddleware],
+  exports: [MongooseModule, DatabaseSeedService, MongoLifecycleService, MongoWakeupMiddleware],
 })
 export class DatabaseModule {}
