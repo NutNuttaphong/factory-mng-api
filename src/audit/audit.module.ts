@@ -1,12 +1,11 @@
-import { Module, Global } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { AuditService } from './audit.service';
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { AuditController } from './audit.controller';
-import { AuditLog } from '../database/entities';
+import { AuditService } from './audit.service';
+import { AuditLog, AuditLogSchema } from '../database/entities/workflow-audit.entity';
 
-@Global() // Make it global so any module can log audits easily
 @Module({
-  imports: [TypeOrmModule.forFeature([AuditLog])],
+  imports: [MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }])],
   controllers: [AuditController],
   providers: [AuditService],
   exports: [AuditService],

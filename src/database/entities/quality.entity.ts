@@ -1,8 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { User } from './rbac.entity';
 import { Product } from './master.entity';
 import { WorkOrder } from './production.entity';
 import { GoodsReceipt } from './purchasing-inventory.entity';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
 export enum QAStatus {
   PASS = 'PASS',
@@ -10,80 +13,81 @@ export enum QAStatus {
   REWORK = 'REWORK',
 }
 
-@Entity('quality_inspections')
+export type QualityInspectionDocument = HydratedDocument<QualityInspection>;
+export type QualityDefectDocument = HydratedDocument<QualityDefect>;
+
+@Schema({ timestamps: true, collection: 'quality_inspections' })
 export class QualityInspection {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. QA-2026-00001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @ManyToOne(() => Product, { eager: true })
-  @JoinColumn({ name: 'product_id' })
-  product: Product;
+  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
+  product: Ref<Product>;
 
-  @ManyToOne(() => WorkOrder, { nullable: true, eager: true })
-  @JoinColumn({ name: 'work_order_id' })
-  workOrder: WorkOrder | null;
+  @Prop({ type: Types.ObjectId, ref: 'WorkOrder', default: null })
+  workOrder: Ref<WorkOrder> | null;
 
-  @ManyToOne(() => GoodsReceipt, { nullable: true, eager: true })
-  @JoinColumn({ name: 'goods_receipt_id' })
-  goodsReceipt: GoodsReceipt | null;
+  @Prop({ type: Types.ObjectId, ref: 'GoodsReceipt', default: null })
+  goodsReceipt: Ref<GoodsReceipt> | null;
 
-  @Column({ nullable: true })
-  batchNo: string;
+  @Prop({ type: String, default: null })
+  batchNo: string | null;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'inspector_id' })
-  inspector: User;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  inspector: Ref<User>;
 
-  // Quantitative measurements
-  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  @Prop({ type: Number, default: null })
   weight: number | null;
 
-  @Column({ type: 'decimal', precision: 8, scale: 2, nullable: true })
+  @Prop({ type: Number, default: null })
   size: number | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Prop({ type: String, default: null })
   color: string | null;
 
-  @Column({ type: 'decimal', precision: 5, scale: 1, nullable: true })
+  @Prop({ type: Number, default: null })
   temperature: number | null;
 
-  @Column({ type: 'text', nullable: true })
+  @Prop({ type: String, default: null })
   defectDetails: string | null;
 
-  @Column({ type: 'varchar', default: QAStatus.PASS })
+  @Prop({ type: String, enum: Object.values(QAStatus), default: QAStatus.PASS })
   status: QAStatus;
 
-  @Column({ type: 'text', nullable: true })
+  @Prop({ type: String, default: null })
   comment: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
   updatedAt: Date;
 }
 
-@Entity('quality_defects')
+export const QualityInspectionSchema = applyMongoTransform(
+  SchemaFactory.createForClass(QualityInspection),
+);
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'quality_defects' })
 export class QualityDefect {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @ManyToOne(() => QualityInspection, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'inspection_id' })
-  inspection: QualityInspection;
+  @Prop({ type: Types.ObjectId, ref: 'QualityInspection', required: true })
+  inspection: Ref<QualityInspection>;
 
-  @Column()
-  defectType: string; // e.g. CRACK, COLOR_MISMATCH, UNDERWEIGHT
+  @Prop({ required: true })
+  defectType: string;
 
-  @Column({ type: 'integer', default: 1 })
-  severity: number; // 1 to 5
+  @Prop({ type: Number, default: 1 })
+  severity: number;
 
-  @Column({ nullable: true })
-  description: string;
+  @Prop({ type: String, default: null })
+  description: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
+
+export const QualityDefectSchema = applyMongoTransform(
+  SchemaFactory.createForClass(QualityDefect),
+);

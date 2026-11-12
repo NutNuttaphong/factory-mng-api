@@ -1,6 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { User } from './rbac.entity';
 import { Product, Warehouse } from './master.entity';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
 export enum WorkOrderStatus {
   DRAFT = 'DRAFT',
@@ -12,91 +15,99 @@ export enum WorkOrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
-@Entity('production_plans')
+export type ProductionPlanDocument = HydratedDocument<ProductionPlan>;
+export type WorkOrderDocument = HydratedDocument<WorkOrder>;
+export type MaterialIssueDocument = HydratedDocument<MaterialIssue>;
+export type ProductionResultDocument = HydratedDocument<ProductionResult>;
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'production_plans' })
 export class ProductionPlan {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. PLN-2026-00001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @ManyToOne(() => Product, { eager: true })
-  @JoinColumn({ name: 'product_id' })
-  product: Product;
+  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
+  product: Ref<Product>;
 
-  @Column({ type: 'integer' })
+  @Prop({ type: Number, required: true })
   targetQuantity: number;
 
-  @Column({ type: 'date' })
+  @Prop({ type: Date, required: true })
   startDate: Date;
 
-  @Column({ type: 'date' })
+  @Prop({ type: Date, required: true })
   endDate: Date;
 
-  @Column({ default: 'PENDING' })
-  status: string; // PENDING, ACTIVE, COMPLETED, CANCELLED
+  @Prop({ default: 'PENDING' })
+  status: string;
 
-  @OneToMany(() => WorkOrder, (wo) => wo.productionPlan)
-  workOrders: WorkOrder[];
-
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('work_orders')
+export const ProductionPlanSchema = applyMongoTransform(
+  SchemaFactory.createForClass(ProductionPlan),
+);
+
+@Schema({ timestamps: true, collection: 'work_orders' })
 export class WorkOrder {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. WO-2026-00001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @ManyToOne(() => ProductionPlan, (plan) => plan.workOrders, { nullable: true })
-  @JoinColumn({ name: 'production_plan_id' })
-  productionPlan: ProductionPlan | null;
+  @Prop({ type: Types.ObjectId, ref: 'ProductionPlan', default: null })
+  productionPlan: Ref<ProductionPlan> | null;
 
-  @ManyToOne(() => Product, { eager: true })
-  @JoinColumn({ name: 'product_id' })
-  product: Product;
+  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
+  product: Ref<Product>;
 
-  @Column({ type: 'integer' })
+  @Prop({ type: Number, required: true })
   quantity: number;
 
-  @Column({ type: 'varchar', default: WorkOrderStatus.DRAFT })
+  @Prop({ type: String, enum: Object.values(WorkOrderStatus), default: WorkOrderStatus.DRAFT })
   status: WorkOrderStatus;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'assigned_to_id' })
-  assignedTo: User;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  assignedTo: Ref<User>;
 
-  @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
   updatedAt: Date;
 }
 
-@Entity('material_issues')
+export const WorkOrderSchema = applyMongoTransform(SchemaFactory.createForClass(WorkOrder));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'material_issues' })
 export class MaterialIssue {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. MI-2026-00001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @ManyToOne(() => WorkOrder, { eager: true })
-  @JoinColumn({ name: 'work_order_id' })
-  workOrder: WorkOrder;
+  @Prop({ type: Types.ObjectId, ref: 'WorkOrder', required: true })
+  workOrder: Ref<WorkOrder>;
 
-  @ManyToOne(() => Warehouse, { eager: true })
-  @JoinColumn({ name: 'warehouse_id' })
-  warehouse: Warehouse; // Warehouse from which materials are drawn
+  @Prop({ type: Types.ObjectId, ref: 'Warehouse', required: true })
+  warehouse: Ref<Warehouse>;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'issued_by_id' })
-  issuedBy: User;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  issuedBy: Ref<User>;
 
-  @Column({ type: 'simple-json', nullable: true })
+  @Prop({
+    type: [
+      {
+        productId: String,
+        productCode: String,
+        productName: String,
+        quantityRequired: Number,
+        quantityIssued: Number,
+      },
+    ],
+    default: [],
+  })
   items: Array<{
     productId: string;
     productCode: string;
@@ -105,35 +116,39 @@ export class MaterialIssue {
     quantityIssued: number;
   }>;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('production_results')
+export const MaterialIssueSchema = applyMongoTransform(
+  SchemaFactory.createForClass(MaterialIssue),
+);
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'production_results' })
 export class ProductionResult {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. PRR-2026-00001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @ManyToOne(() => WorkOrder, { eager: true })
-  @JoinColumn({ name: 'work_order_id' })
-  workOrder: WorkOrder;
+  @Prop({ type: Types.ObjectId, ref: 'WorkOrder', required: true })
+  workOrder: Ref<WorkOrder>;
 
-  @Column({ type: 'integer' })
+  @Prop({ type: Number, required: true })
   quantityProduced: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Prop({ type: Number, default: 0 })
   quantityDefective: number;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'operator_id' })
-  operator: User;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  operator: Ref<User>;
 
-  @Column({ nullable: true })
-  notes: string;
+  @Prop({ type: String, default: null })
+  notes: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
+
+export const ProductionResultSchema = applyMongoTransform(
+  SchemaFactory.createForClass(ProductionResult),
+);

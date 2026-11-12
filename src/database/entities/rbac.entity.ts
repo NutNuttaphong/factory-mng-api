@@ -1,77 +1,100 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToMany, JoinTable } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
-@Entity('permissions')
+export type PermissionDocument = HydratedDocument<Permission>;
+export type RoleDocument = HydratedDocument<Role>;
+export type UserDocument = HydratedDocument<User>;
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'permissions' })
 export class Permission {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
+  @Prop({ required: true, unique: true, trim: true })
   code: string;
 
-  @Column({ nullable: true })
-  description: string;
+  @Prop({ type: String, default: null })
+  description: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('roles')
-export class Role {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+export const PermissionSchema = applyMongoTransform(SchemaFactory.createForClass(Permission));
 
-  @Column({ unique: true })
+@Schema({ timestamps: true, collection: 'roles' })
+export class Role {
+  id: string;
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, trim: true })
   name: string;
 
-  @Column({ nullable: true })
-  description: string;
+  @Prop({ type: String, default: null })
+  description: string | null;
 
-  @ManyToMany(() => Permission)
-  @JoinTable({
-    name: 'role_permissions',
-    joinColumn: { name: 'role_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'permission_id', referencedColumnName: 'id' }
-  })
-  permissions: Permission[];
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Permission' }], default: [] })
+  permissions: Ref<Permission>[];
 
-  @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
   updatedAt: Date;
 }
 
-@Entity('users')
-export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+export const RoleSchema = applyMongoTransform(SchemaFactory.createForClass(Role));
 
-  @Column({ unique: true })
+@Schema({ timestamps: true, collection: 'users' })
+export class User {
+  id: string;
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, lowercase: true, trim: true })
   email: string;
 
-  @Column({ select: false })
+  @Prop({ required: true, select: false })
   passwordHash: string;
 
-  @Column()
+  @Prop({ required: true, trim: true })
   fullName: string;
 
-  @Column({ default: true })
+  @Prop({ default: true })
   isActive: boolean;
 
-  @Column({ default: 0 })
+  @Prop({ default: 0 })
   tokenVersion: number;
 
-  @ManyToMany(() => Role)
-  @JoinTable({
-    name: 'user_roles',
-    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'role_id', referencedColumnName: 'id' }
-  })
-  roles: Role[];
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Role' }], default: [] })
+  roles: Ref<Role>[];
 
-  @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
   updatedAt: Date;
+}
+
+export const UserSchema = applyMongoTransform(SchemaFactory.createForClass(User));
+
+/** Extracts populated role names, role IDs, and deduplicated permission codes from a user. */
+export function extractUserAccess(user?: User | null): {
+  roleNames: string[];
+  roleIds: string[];
+  permissions: string[];
+} {
+  const roleNames: string[] = [];
+  const roleIds: string[] = [];
+  const permissions = new Set<string>();
+
+  for (const roleRef of user?.roles ?? []) {
+    if (!roleRef || typeof roleRef !== 'object' || !('name' in roleRef)) {
+      continue;
+    }
+    const role = roleRef as Role;
+    roleNames.push(role.name);
+    roleIds.push(role.id ?? String(role._id));
+    for (const permRef of role.permissions ?? []) {
+      if (permRef && typeof permRef === 'object' && 'code' in permRef) {
+        permissions.add((permRef as Permission).code);
+      }
+    }
+  }
+
+  return { roleNames, roleIds, permissions: Array.from(permissions) };
 }

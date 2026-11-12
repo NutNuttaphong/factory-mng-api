@@ -1,139 +1,147 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { User, Role } from './rbac.entity';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
-// --- APPROVAL WORKFLOWS ---
+export type ApprovalWorkflowDocument = HydratedDocument<ApprovalWorkflow>;
+export type ApprovalStepDocument = HydratedDocument<ApprovalStep>;
+export type ApprovalHistoryDocument = HydratedDocument<ApprovalHistory>;
+export type AuditLogDocument = HydratedDocument<AuditLog>;
+export type NotificationDocument = HydratedDocument<Notification>;
 
-@Entity('approval_workflows')
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'approval_workflows' })
 export class ApprovalWorkflow {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column()
-  targetType: string; // e.g. PURCHASE_REQUEST, PURCHASE_ORDER
+  @Prop({ required: true })
+  targetType: string;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Prop({ type: Number, required: true })
   minAmount: number;
 
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
+  @Prop({ type: Number, required: true })
   maxAmount: number;
 
-  @Column({ default: true })
+  @Prop({ default: true })
   isActive: boolean;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('approval_steps')
+export const ApprovalWorkflowSchema = applyMongoTransform(
+  SchemaFactory.createForClass(ApprovalWorkflow),
+);
+
+@Schema({ collection: 'approval_steps' })
 export class ApprovalStep {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @ManyToOne(() => ApprovalWorkflow, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'workflow_id' })
-  workflow: ApprovalWorkflow;
+  @Prop({ type: Types.ObjectId, ref: 'ApprovalWorkflow', required: true })
+  workflow: Ref<ApprovalWorkflow>;
 
-  @Column({ type: 'integer' })
-  stepOrder: number; // 1, 2, 3
+  @Prop({ type: Number, required: true })
+  stepOrder: number;
 
-  @ManyToOne(() => Role, { eager: true })
-  @JoinColumn({ name: 'role_id' })
-  role: Role; // Role that needs to approve this step (e.g. Manager, Director, Finance)
+  @Prop({ type: Types.ObjectId, ref: 'Role', required: true })
+  role: Ref<Role>;
 }
 
-@Entity('approval_histories')
+export const ApprovalStepSchema = applyMongoTransform(SchemaFactory.createForClass(ApprovalStep));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'approval_histories' })
 export class ApprovalHistory {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column()
-  entityType: string; // e.g. PURCHASE_REQUEST, PURCHASE_ORDER
+  @Prop({ required: true })
+  entityType: string;
 
-  @Column()
-  entityId: string; // ID of the request or order
+  @Prop({ required: true })
+  entityId: string;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'user_id' })
-  user: User; // Who approved/rejected
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  user: Ref<User>;
 
-  @Column()
-  action: string; // e.g. SUBMIT, APPROVE, REJECT, CANCEL
+  @Prop({ required: true })
+  action: string;
 
-  @Column({ nullable: true })
-  comment: string;
+  @Prop({ type: String, default: null })
+  comment: string | null;
 
-  @Column({ nullable: true })
-  previousStatus: string;
+  @Prop({ type: String, default: null })
+  previousStatus: string | null;
 
-  @Column({ nullable: true })
-  newStatus: string;
+  @Prop({ type: String, default: null })
+  newStatus: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
+export const ApprovalHistorySchema = applyMongoTransform(
+  SchemaFactory.createForClass(ApprovalHistory),
+);
 
-// --- AUDIT LOGS ---
-
-@Entity('audit_logs')
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'audit_logs' })
 export class AuditLog {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Prop({ type: String, default: null })
   userEmail: string | null;
 
-  @Column({ type: 'varchar' })
-  action: string; // e.g. CREATE_PRODUCT, UPDATE_PRODUCT
+  @Prop({ required: true })
+  action: string;
 
-  @Column()
-  entityName: string; // e.g. Product, Stock
+  @Prop({ required: true })
+  entityName: string;
 
-  @Column()
+  @Prop({ required: true })
   entityId: string;
 
-  @Column({ type: 'text', nullable: true })
-  beforeState: string | null; // JSON string of old fields
+  @Prop({ type: String, default: null })
+  beforeState: string | null;
 
-  @Column({ type: 'text', nullable: true })
-  afterState: string | null; // JSON string of new fields
+  @Prop({ type: String, default: null })
+  afterState: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Prop({ type: String, default: null })
   ipAddress: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
+export const AuditLogSchema = applyMongoTransform(SchemaFactory.createForClass(AuditLog));
 
-// --- NOTIFICATIONS ---
-
-@Entity('notifications')
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'notifications' })
 export class Notification {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column()
+  @Prop({ required: true })
   title: string;
 
-  @Column()
+  @Prop({ required: true })
   message: string;
 
-  @Column({ default: false })
+  @Prop({ default: false })
   isRead: boolean;
 
-  @Column({ nullable: true })
-  recipientRole: string; // Broadcast to a role (e.g. QA, Manager, Warehouse)
+  @Prop({ type: String, default: null })
+  recipientRole: string | null;
 
-  @Column({ nullable: true })
-  recipientId: string; // Send to a specific User ID
+  @Prop({ type: String, default: null })
+  recipientId: string | null;
 
-  @Column({ nullable: true })
-  entityType: string; // e.g. PURCHASE_REQUEST, STOCK, QUALITY_INSPECTION
+  @Prop({ type: String, default: null })
+  entityType: string | null;
 
-  @Column({ nullable: true })
-  entityId: string;
+  @Prop({ type: String, default: null })
+  entityId: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
+
+export const NotificationSchema = applyMongoTransform(SchemaFactory.createForClass(Notification));

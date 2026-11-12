@@ -1,12 +1,30 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { InventoryService } from './inventory.service';
+import { MongooseModule } from '@nestjs/mongoose';
 import { InventoryController } from './inventory.controller';
-import { Stock, StockMovement, Product, Warehouse } from '../database/entities';
+import { InventoryService } from './inventory.service';
+import {
+  Stock,
+  StockSchema,
+  StockMovement,
+  StockMovementSchema,
+  Product,
+  ProductSchema,
+  Warehouse,
+  WarehouseSchema,
+} from '../database/entities';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Stock, StockMovement, Product, Warehouse])
+    MongooseModule.forFeature([
+      { name: Stock.name, schema: StockSchema },
+      { name: StockMovement.name, schema: StockMovementSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Warehouse.name, schema: WarehouseSchema },
+    ]),
+    NotificationsModule,
+    AuditModule,
   ],
   controllers: [InventoryController],
   providers: [InventoryService],

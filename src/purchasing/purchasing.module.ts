@@ -1,38 +1,45 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { PurchasingService } from './purchasing.service';
+import { MongooseModule } from '@nestjs/mongoose';
 import { PurchasingController } from './purchasing.controller';
+import { PurchasingService } from './purchasing.service';
 import {
   PurchaseRequest,
-  PurchaseRequestItem,
+  PurchaseRequestSchema,
   PurchaseOrder,
-  PurchaseOrderItem,
+  PurchaseOrderSchema,
   GoodsReceipt,
-  GoodsReceiptItem,
+  GoodsReceiptSchema,
   ApprovalWorkflow,
+  ApprovalWorkflowSchema,
   ApprovalStep,
+  ApprovalStepSchema,
   ApprovalHistory,
+  ApprovalHistorySchema,
   Product,
+  ProductSchema,
   Supplier,
-  User
+  SupplierSchema,
+  User,
+  UserSchema,
 } from '../database/entities';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      PurchaseRequest,
-      PurchaseRequestItem,
-      PurchaseOrder,
-      PurchaseOrderItem,
-      GoodsReceipt,
-      GoodsReceiptItem,
-      ApprovalWorkflow,
-      ApprovalStep,
-      ApprovalHistory,
-      Product,
-      Supplier,
-      User
-    ])
+    MongooseModule.forFeature([
+      { name: PurchaseRequest.name, schema: PurchaseRequestSchema },
+      { name: PurchaseOrder.name, schema: PurchaseOrderSchema },
+      { name: GoodsReceipt.name, schema: GoodsReceiptSchema },
+      { name: ApprovalWorkflow.name, schema: ApprovalWorkflowSchema },
+      { name: ApprovalStep.name, schema: ApprovalStepSchema },
+      { name: ApprovalHistory.name, schema: ApprovalHistorySchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Supplier.name, schema: SupplierSchema },
+      { name: User.name, schema: UserSchema },
+    ]),
+    NotificationsModule,
+    AuditModule,
   ],
   controllers: [PurchasingController],
   providers: [PurchasingService],

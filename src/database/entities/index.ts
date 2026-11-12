@@ -1,3 +1,4 @@
+export * from './schema.util';
 export * from './rbac.entity';
 export * from './master.entity';
 export * from './purchasing-inventory.entity';

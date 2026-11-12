@@ -1,36 +1,47 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { ProductionService } from './production.service';
+import { MongooseModule } from '@nestjs/mongoose';
 import { ProductionController } from './production.controller';
-import { InventoryModule } from '../inventory/inventory.module';
+import { ProductionService } from './production.service';
 import {
   ProductionPlan,
+  ProductionPlanSchema,
   WorkOrder,
+  WorkOrderSchema,
   MaterialIssue,
+  MaterialIssueSchema,
   ProductionResult,
+  ProductionResultSchema,
   BOM,
-  BOMItem,
+  BOMSchema,
   Product,
+  ProductSchema,
   Warehouse,
+  WarehouseSchema,
   Stock,
-  User
+  StockSchema,
+  User,
+  UserSchema,
 } from '../database/entities';
+import { InventoryModule } from '../inventory/inventory.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      ProductionPlan,
-      WorkOrder,
-      MaterialIssue,
-      ProductionResult,
-      BOM,
-      BOMItem,
-      Product,
-      Warehouse,
-      Stock,
-      User
+    MongooseModule.forFeature([
+      { name: ProductionPlan.name, schema: ProductionPlanSchema },
+      { name: WorkOrder.name, schema: WorkOrderSchema },
+      { name: MaterialIssue.name, schema: MaterialIssueSchema },
+      { name: ProductionResult.name, schema: ProductionResultSchema },
+      { name: BOM.name, schema: BOMSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Warehouse.name, schema: WarehouseSchema },
+      { name: Stock.name, schema: StockSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     InventoryModule,
+    NotificationsModule,
+    AuditModule,
   ],
   controllers: [ProductionController],
   providers: [ProductionService],

@@ -1,30 +1,35 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { MasterDataService } from './master-data.service';
+import { MongooseModule } from '@nestjs/mongoose';
 import { MasterDataController } from './master-data.controller';
+import { MasterDataService } from './master-data.service';
 import {
-  Product,
   Category,
+  CategorySchema,
   Unit,
+  UnitSchema,
   Supplier,
+  SupplierSchema,
   Customer,
+  CustomerSchema,
   Warehouse,
-  WarehouseLocation,
-  Stock
+  WarehouseSchema,
+  Product,
+  ProductSchema,
+  Stock,
+  StockSchema,
 } from '../database/entities';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      Product,
-      Category,
-      Unit,
-      Supplier,
-      Customer,
-      Warehouse,
-      WarehouseLocation,
-      Stock
-    ])
+    MongooseModule.forFeature([
+      { name: Product.name, schema: ProductSchema },
+      { name: Category.name, schema: CategorySchema },
+      { name: Unit.name, schema: UnitSchema },
+      { name: Supplier.name, schema: SupplierSchema },
+      { name: Customer.name, schema: CustomerSchema },
+      { name: Warehouse.name, schema: WarehouseSchema },
+      { name: Stock.name, schema: StockSchema },
+    ]),
   ],
   controllers: [MasterDataController],
   providers: [MasterDataService],

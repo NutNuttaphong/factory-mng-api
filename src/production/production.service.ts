@@ -1,18 +1,20 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import {
   ProductionPlan,
   WorkOrder,
   MaterialIssue,
   ProductionResult,
   BOM,
-  BOMItem,
   WorkOrderStatus,
   Product,
   Warehouse,
   User,
-  Stock
+  Stock,
+  isValidObjectId,
+  refId,
+  asDoc,
 } from '../database/entities';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -21,31 +23,36 @@ import { AuditService } from '../audit/audit.service';
 @Injectable()
 export class ProductionService {
   constructor(
-    @InjectRepository(ProductionPlan) private planRepo: Repository<ProductionPlan>,
-    @InjectRepository(WorkOrder) private woRepo: Repository<WorkOrder>,
-    @InjectRepository(MaterialIssue) private issueRepo: Repository<MaterialIssue>,
-    @InjectRepository(ProductionResult) private resultRepo: Repository<ProductionResult>,
-    @InjectRepository(BOM) private bomRepo: Repository<BOM>,
-    @InjectRepository(BOMItem) private bomItemRepo: Repository<BOMItem>,
-    @InjectRepository(Product) private productRepo: Repository<Product>,
-    @InjectRepository(Warehouse) private warehouseRepo: Repository<Warehouse>,
-    @InjectRepository(Stock) private stockRepo: Repository<Stock>,
-    @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectModel(ProductionPlan.name) private planModel: Model<ProductionPlan>,
+    @InjectModel(WorkOrder.name) private woModel: Model<WorkOrder>,
+    @InjectModel(MaterialIssue.name) private issueModel: Model<MaterialIssue>,
+    @InjectModel(ProductionResult.name) private resultModel: Model<ProductionResult>,
+    @InjectModel(BOM.name) private bomModel: Model<BOM>,
+    @InjectModel(Product.name) private productModel: Model<Product>,
+    @InjectModel(Warehouse.name) private warehouseModel: Model<Warehouse>,
+    @InjectModel(Stock.name) private stockModel: Model<Stock>,
+    @InjectModel(User.name) private userModel: Model<User>,
     private inventoryService: InventoryService,
     private notificationsService: NotificationsService,
-    private auditService: AuditService
+    private auditService: AuditService,
   ) {}
 
   // --- BILL OF MATERIALS (BOM) ---
 
   async findBOMs() {
-    return this.bomRepo.find({
-      relations: { product: true, items: { product: true } },
-      order: { code: 'ASC' }
-    });
+    return this.bomModel
+      .find()
+      .populate(['product', 'items.product'])
+      .sort({ code: 1 })
+      .exec();
   }
 
-  async createBOM(dto: { code: string; productId: string; description?: string; items: Array<{ productId: string; quantityNeeded: number }> }) {
+  async createBOM(dto: {
+    code: string;
+    productId: string;
+    description?: string;
+    items: Array<{ productId: string; quantityNeeded: number }>;
+  }) {
     if (!Array.isArray(dto.items) || dto.items.length === 0) {
       throw new BadRequestException('BOM must include at least one component item');
     }
@@ -55,43 +62,41 @@ export class ProductionService {
       }
     }
 
-    const product = await this.productRepo.findOneBy({ id: dto.productId });
+    if (!isValidObjectId(dto.productId)) {
+      throw new NotFoundException('Finished product not found');
+    }
+    const product = await this.productModel.findById(dto.productId).exec();
     if (!product) throw new NotFoundException('Finished product not found');
 
-    const bom = this.bomRepo.create({
-      code: dto.code,
-      product,
-      description: dto.description,
-      isActive: true,
-      items: []
-    });
-
-    const savedBom = await this.bomRepo.save(bom);
-
-    const items: BOMItem[] = [];
+    const items: Array<{ product: any; quantityNeeded: number }> = [];
     for (const itemDto of dto.items) {
-      const comp = await this.productRepo.findOneBy({ id: itemDto.productId });
+      if (!isValidObjectId(itemDto.productId)) {
+        throw new NotFoundException(`Component product ${itemDto.productId} not found`);
+      }
+      const comp = await this.productModel.findById(itemDto.productId).exec();
       if (!comp) throw new NotFoundException(`Component product ${itemDto.productId} not found`);
-
-      const item = this.bomItemRepo.create({
-        bom: savedBom,
-        product: comp,
-        quantityNeeded: itemDto.quantityNeeded
-      });
-      items.push(await this.bomItemRepo.save(item));
+      items.push({ product: comp._id, quantityNeeded: itemDto.quantityNeeded });
     }
 
-    savedBom.items = items;
-    return savedBom;
+    const created = await this.bomModel.create({
+      code: dto.code,
+      product: product._id,
+      description: dto.description ?? null,
+      isActive: true,
+      items,
+    });
+
+    return this.bomModel.findById(created.id).populate(['product', 'items.product']).exec();
   }
 
   // --- PRODUCTION PLANS ---
 
   async findPlans() {
-    return this.planRepo.find({
-      relations: { product: true },
-      order: { createdAt: 'DESC' }
-    });
+    return this.planModel
+      .find()
+      .populate('product')
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async createPlan(dto: { productId: string; targetQuantity: number; startDate: Date; endDate: Date }) {
@@ -102,102 +107,116 @@ export class ProductionService {
       throw new BadRequestException('Plan endDate cannot be earlier than startDate');
     }
 
-    const product = await this.productRepo.findOneBy({ id: dto.productId });
+    if (!isValidObjectId(dto.productId)) {
+      throw new NotFoundException('Product not found');
+    }
+    const product = await this.productModel.findById(dto.productId).exec();
     if (!product) throw new NotFoundException('Product not found');
 
-    const planCount = await this.planRepo.count();
+    const planCount = await this.planModel.countDocuments().exec();
     const code = `PLN-2026-${String(planCount + 1).padStart(5, '0')}`;
 
-    const plan = this.planRepo.create({
+    const created = await this.planModel.create({
       code,
-      product,
+      product: product._id,
       targetQuantity: dto.targetQuantity,
       startDate: dto.startDate,
       endDate: dto.endDate,
-      status: 'PENDING'
+      status: 'PENDING',
     });
 
-    return this.planRepo.save(plan);
+    return this.planModel.findById(created.id).populate('product').exec();
   }
 
   // --- WORK ORDERS (WO) ---
 
   async findWorkOrders() {
-    return this.woRepo.find({
-      relations: { productionPlan: true, product: true, assignedTo: true },
-      order: { code: 'DESC' }
-    });
+    return this.woModel
+      .find()
+      .populate(['productionPlan', 'product', 'assignedTo'])
+      .sort({ code: -1 })
+      .exec();
   }
 
   async findWorkOrder(id: string) {
-    let wo = await this.woRepo.findOne({
-      where: { id },
-      relations: { productionPlan: true, product: true, assignedTo: true }
-    });
+    let wo: any = null;
+    if (isValidObjectId(id)) {
+      wo = await this.woModel
+        .findById(id)
+        .populate(['productionPlan', 'product', 'assignedTo'])
+        .exec();
+    }
     if (!wo && id.startsWith('wo-')) {
       const idx = parseInt(id.substring(3), 10);
       if (!isNaN(idx)) {
         const code = `WO-2026-${String(idx).padStart(5, '0')}`;
-        wo = await this.woRepo.findOne({
-          where: { code },
-          relations: { productionPlan: true, product: true, assignedTo: true }
-        });
+        wo = await this.woModel
+          .findOne({ code })
+          .populate(['productionPlan', 'product', 'assignedTo'])
+          .exec();
       }
     }
     if (!wo) throw new NotFoundException('Work Order not found');
     return wo;
   }
 
-  async createWorkOrder(dto: { productionPlanId?: string; productId: string; quantity: number; assignedToId: string }) {
+  async createWorkOrder(dto: {
+    productionPlanId?: string;
+    productId: string;
+    quantity: number;
+    assignedToId: string;
+  }) {
     if (!Number.isFinite(dto.quantity) || dto.quantity <= 0) {
       throw new BadRequestException('Work order quantity must be greater than zero');
     }
 
-    const product = await this.productRepo.findOneBy({ id: dto.productId });
-    const assignedTo = await this.userRepo.findOne({
-      where: [
-        { id: dto.assignedToId },
-        { email: dto.assignedToId }
-      ]
-    });
+    if (!isValidObjectId(dto.productId)) {
+      throw new NotFoundException('Product or Operator not found');
+    }
+    const product = await this.productModel.findById(dto.productId).exec();
+    const assignedTo = isValidObjectId(dto.assignedToId)
+      ? await this.userModel.findById(dto.assignedToId).exec()
+      : await this.userModel.findOne({ email: dto.assignedToId.trim().toLowerCase() }).exec();
 
     if (!product || !assignedTo) throw new NotFoundException('Product or Operator not found');
 
-    let plan: ProductionPlan | null = null;
-    if (dto.productionPlanId) {
-      plan = await this.planRepo.findOneBy({ id: dto.productionPlanId });
+    let plan: any = null;
+    if (dto.productionPlanId && isValidObjectId(dto.productionPlanId)) {
+      plan = await this.planModel.findById(dto.productionPlanId).exec();
       if (plan) {
         plan.status = 'ACTIVE';
-        await this.planRepo.save(plan);
+        await plan.save();
       }
     }
 
-    const woCount = await this.woRepo.count();
+    const woCount = await this.woModel.countDocuments().exec();
     const code = `WO-2026-${String(woCount + 1).padStart(5, '0')}`;
 
-    const wo = this.woRepo.create({
+    const created = await this.woModel.create({
       code,
-      productionPlan: plan,
-      product,
+      productionPlan: plan ? plan._id : null,
+      product: product._id,
       quantity: dto.quantity,
       status: WorkOrderStatus.DRAFT,
-      assignedTo
+      assignedTo: assignedTo._id,
     });
 
-    return this.woRepo.save(wo);
+    return this.findWorkOrder(created.id);
   }
 
   // --- MATERIAL REQUIREMENT & CHECK ---
 
   async checkMaterialRequirement(woId: string) {
     const wo = await this.findWorkOrder(woId);
-    const bom = await this.bomRepo.findOne({
-      where: { product: { id: wo.product.id }, isActive: true },
-      relations: { items: { product: true } }
-    });
+    const bom = await this.bomModel
+      .findOne({ product: refId(wo.product), isActive: true })
+      .populate('items.product')
+      .exec();
 
     if (!bom) {
-      throw new BadRequestException(`No active Bill of Materials found for product ${wo.product.code}`);
+      throw new BadRequestException(
+        `No active Bill of Materials found for product ${wo.product.code}`,
+      );
     }
 
     const requirements: Array<{
@@ -210,37 +229,34 @@ export class ProductionService {
     }> = [];
     let allAvailable = true;
 
-    // We assume checking in the main warehouse of the raw materials (WH-A)
     for (const bomItem of bom.items) {
       const requiredQty = Number(bomItem.quantityNeeded) * wo.quantity;
-
-      // Query current stock of component product
-      const stock = await this.stockRepo.findOne({
-        where: { product: { id: bomItem.product.id } } // Sum or get specific
-      });
+      const stock = await this.stockModel.findOne({ product: refId(bomItem.product) }).exec();
 
       const currentQty = stock ? stock.quantity : 0;
       const isAvailable = currentQty >= requiredQty;
       if (!isAvailable) allAvailable = false;
 
+      const prod = asDoc(bomItem.product);
       requirements.push({
-        productId: bomItem.product.id,
-        code: bomItem.product.code,
-        name: bomItem.product.name,
+        productId: prod.id,
+        code: prod.code,
+        name: prod.name,
         requiredQty,
         availableQty: currentQty,
-        isAvailable
+        isAvailable,
       });
     }
 
+    const woProduct = asDoc(wo.product);
     return {
       workOrderId: wo.id,
       workOrderCode: wo.code,
-      productCode: wo.product.code,
-      productName: wo.product.name,
+      productCode: woProduct.code,
+      productName: woProduct.name,
       targetQty: wo.quantity,
       allAvailable,
-      requirements
+      requirements,
     };
   }
 
@@ -249,17 +265,24 @@ export class ProductionService {
   async issueMaterials(woId: string, warehouseId: string, user: User) {
     const wo = await this.findWorkOrder(woId);
     if (wo.status !== WorkOrderStatus.DRAFT && wo.status !== WorkOrderStatus.PENDING_MATERIAL) {
-      throw new BadRequestException('Materials can only be issued for DRAFT or PENDING_MATERIAL orders');
+      throw new BadRequestException(
+        'Materials can only be issued for DRAFT or PENDING_MATERIAL orders',
+      );
     }
 
     const check = await this.checkMaterialRequirement(woId);
     if (!check.allAvailable) {
       wo.status = WorkOrderStatus.PENDING_MATERIAL;
-      await this.woRepo.save(wo);
-      throw new BadRequestException('Cannot issue materials, stock is insufficient for some components');
+      await wo.save();
+      throw new BadRequestException(
+        'Cannot issue materials, stock is insufficient for some components',
+      );
     }
 
-    const warehouse = await this.warehouseRepo.findOneBy({ id: warehouseId });
+    if (!isValidObjectId(warehouseId)) {
+      throw new NotFoundException('Warehouse not found');
+    }
+    const warehouse = await this.warehouseModel.findById(warehouseId).exec();
     if (!warehouse) throw new NotFoundException('Warehouse not found');
 
     const issueItems: Array<{
@@ -270,7 +293,6 @@ export class ProductionService {
       quantityIssued: number;
     }> = [];
 
-    // Perform actual stock out for each component
     for (const req of check.requirements) {
       await this.inventoryService.stockOut(
         req.productId,
@@ -278,7 +300,7 @@ export class ProductionService {
         req.requiredQty,
         'WORK_ORDER_ISSUE',
         wo.id,
-        user
+        user,
       );
 
       issueItems.push({
@@ -286,33 +308,30 @@ export class ProductionService {
         productCode: req.code,
         productName: req.name,
         quantityRequired: req.requiredQty,
-        quantityIssued: req.requiredQty
+        quantityIssued: req.requiredQty,
       });
     }
 
-    // Save Material Issue log
-    const issueCount = await this.issueRepo.count();
+    const issueCount = await this.issueModel.countDocuments().exec();
     const code = `MI-2026-${String(issueCount + 1).padStart(5, '0')}`;
 
-    const materialIssue = this.issueRepo.create({
+    const materialIssue = await this.issueModel.create({
       code,
-      workOrder: wo,
-      warehouse,
-      issuedBy: user,
-      items: issueItems
+      workOrder: wo._id,
+      warehouse: warehouse._id,
+      issuedBy: refId(user),
+      items: issueItems,
     });
-    await this.issueRepo.save(materialIssue);
 
-    // Advance WO status
     wo.status = WorkOrderStatus.MATERIAL_ISSUED;
-    await this.woRepo.save(wo);
+    await wo.save();
 
     await this.notificationsService.create({
       title: 'Materials Issued',
       message: `Materials for Work Order ${wo.code} have been successfully issued from ${warehouse.name}.`,
       recipientRole: 'Production',
       entityType: 'WORK_ORDER',
-      entityId: wo.id
+      entityId: wo.id,
     });
 
     return materialIssue;
@@ -327,55 +346,64 @@ export class ProductionService {
     }
 
     wo.status = WorkOrderStatus.IN_PRODUCTION;
-    return this.woRepo.save(wo);
+    await wo.save();
+    return wo;
   }
 
   // --- REPORT RESULT (SUBMIT TO QA) ---
 
-  async reportResult(woId: string, qtyProduced: number, qtyDefective: number, notes: string, user: User) {
-    if (!Number.isFinite(qtyProduced) || qtyProduced < 0 || !Number.isFinite(qtyDefective) || qtyDefective < 0) {
+  async reportResult(
+    woId: string,
+    qtyProduced: number,
+    qtyDefective: number,
+    notes: string,
+    user: User,
+  ) {
+    if (
+      !Number.isFinite(qtyProduced) ||
+      qtyProduced < 0 ||
+      !Number.isFinite(qtyDefective) ||
+      qtyDefective < 0
+    ) {
       throw new BadRequestException('Production quantities cannot be negative');
     }
 
     const wo = await this.findWorkOrder(woId);
     if (wo.status !== WorkOrderStatus.IN_PRODUCTION) {
-      throw new BadRequestException('Can only report results for orders currently IN_PRODUCTION');
+      throw new BadRequestException(
+        'Can only report results for orders currently IN_PRODUCTION',
+      );
     }
 
-    const resultCount = await this.resultRepo.count();
+    const resultCount = await this.resultModel.countDocuments().exec();
     const code = `PRR-2026-${String(resultCount + 1).padStart(5, '0')}`;
 
-    const result = this.resultRepo.create({
+    const result = await this.resultModel.create({
       code,
-      workOrder: wo,
+      workOrder: wo._id,
       quantityProduced: Number(qtyProduced),
       quantityDefective: Number(qtyDefective),
-      operator: user,
-      notes
+      operator: refId(user),
+      notes: notes ?? null,
     });
 
-    await this.resultRepo.save(result);
-
-    // Advance WO status to PENDING_QA
     wo.status = WorkOrderStatus.PENDING_QA;
-    await this.woRepo.save(wo);
+    await wo.save();
 
-    // Auto-create notification for QA
     await this.notificationsService.create({
       title: 'Production QA Inspection Required',
       message: `Work Order ${wo.code} completed production of ${qtyProduced} units. QA inspection required.`,
       recipientRole: 'QA',
       entityType: 'WORK_ORDER',
-      entityId: wo.id
+      entityId: wo.id,
     });
 
-    // Audit logs
     await this.auditService.log({
       action: 'PRODUCTION_REPORT',
       entityName: 'WorkOrder',
       entityId: wo.id,
       afterState: { qtyProduced, qtyDefective },
-      userEmail: user.email
+      userEmail: user.email,
     });
 
     return result;

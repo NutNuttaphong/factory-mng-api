@@ -1,6 +1,9 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { User } from './rbac.entity';
 import { Customer, Product } from './master.entity';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
 export enum SalesOrderStatus {
   DRAFT = 'DRAFT',
@@ -11,67 +14,6 @@ export enum SalesOrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
-@Entity('sales_orders')
-export class SalesOrder {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column({ unique: true })
-  code: string; // e.g. SO-2026-00001
-
-  @ManyToOne(() => Customer, { eager: true })
-  @JoinColumn({ name: 'customer_id' })
-  customer: Customer;
-
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'salesperson_id' })
-  salesperson: User;
-
-  @Column({ type: 'varchar', default: SalesOrderStatus.DRAFT })
-  status: SalesOrderStatus;
-
-  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
-  totalAmount: number;
-
-  @OneToMany(() => SalesOrderItem, (item) => item.salesOrder, { cascade: true, eager: true })
-  items: SalesOrderItem[];
-
-  @Column({ nullable: true })
-  notes: string;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
-}
-
-@Entity('sales_order_items')
-export class SalesOrderItem {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @ManyToOne(() => SalesOrder, (so) => so.items, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'sales_order_id' })
-  salesOrder: SalesOrder;
-
-  @ManyToOne(() => Product, { eager: true })
-  @JoinColumn({ name: 'product_id' })
-  product: Product;
-
-  @Column({ type: 'integer' })
-  quantity: number;
-
-  @Column({ type: 'integer', default: 0 })
-  quantityReserved: number;
-
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
-  price: number;
-
-  @Column({ type: 'decimal', precision: 12, scale: 2 })
-  totalPrice: number;
-}
-
 export enum DeliveryStatus {
   PENDING = 'PENDING',
   SHIPPED = 'SHIPPED',
@@ -79,28 +21,87 @@ export enum DeliveryStatus {
   RETURNED = 'RETURNED',
 }
 
-@Entity('deliveries')
-export class Delivery {
-  @PrimaryGeneratedColumn('uuid')
+export type SalesOrderDocument = HydratedDocument<SalesOrder>;
+export type DeliveryDocument = HydratedDocument<Delivery>;
+
+@Schema()
+export class SalesOrderItem {
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. DLV-2026-00001
+  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
+  product: Ref<Product>;
 
-  @ManyToOne(() => SalesOrder, { eager: true })
-  @JoinColumn({ name: 'sales_order_id' })
-  salesOrder: SalesOrder;
+  @Prop({ type: Number, required: true })
+  quantity: number;
 
-  @ManyToOne(() => User, { eager: true })
-  @JoinColumn({ name: 'shipped_by_id' })
-  shippedBy: User;
+  @Prop({ type: Number, default: 0 })
+  quantityReserved: number;
 
-  @Column({ type: 'varchar', default: DeliveryStatus.PENDING })
+  @Prop({ type: Number, required: true })
+  price: number;
+
+  @Prop({ type: Number, required: true })
+  totalPrice: number;
+}
+
+export const SalesOrderItemSchema = applyMongoTransform(
+  SchemaFactory.createForClass(SalesOrderItem),
+);
+
+@Schema({ timestamps: true, collection: 'sales_orders' })
+export class SalesOrder {
+  id: string;
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Customer', required: true })
+  customer: Ref<Customer>;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  salesperson: Ref<User>;
+
+  @Prop({ type: String, enum: Object.values(SalesOrderStatus), default: SalesOrderStatus.DRAFT })
+  status: SalesOrderStatus;
+
+  @Prop({ type: Number, default: 0 })
+  totalAmount: number;
+
+  @Prop({ type: [SalesOrderItemSchema], default: [] })
+  items: SalesOrderItem[];
+
+  @Prop({ type: String, default: null })
+  notes: string | null;
+
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export const SalesOrderSchema = applyMongoTransform(SchemaFactory.createForClass(SalesOrder));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'deliveries' })
+export class Delivery {
+  id: string;
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'SalesOrder', required: true })
+  salesOrder: Ref<SalesOrder>;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  shippedBy: Ref<User>;
+
+  @Prop({ type: String, enum: Object.values(DeliveryStatus), default: DeliveryStatus.PENDING })
   status: DeliveryStatus;
 
-  @Column({ type: 'date', nullable: true })
-  deliveryDate: Date;
+  @Prop({ type: Date, default: null })
+  deliveryDate: Date | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
+
+export const DeliverySchema = applyMongoTransform(SchemaFactory.createForClass(Delivery));

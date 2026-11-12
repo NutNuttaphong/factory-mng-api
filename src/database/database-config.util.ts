@@ -1,84 +1,74 @@
-import { join } from 'path';
-import { DataSourceOptions } from 'typeorm';
-import * as entities from './entities';
-
-export const entityArray = Object.values(entities).filter(
-  (val) => typeof val === 'function',
-);
-
-export interface DatabaseEnvConfig {
+export interface MongoEnvConfig {
   NODE_ENV?: string;
+  MONGODB_URI?: string;
+  MONGO_URL?: string;
   DATABASE_URL?: string;
-  DB_TYPE?: string;
-  DB_HOST?: string;
-  DB_PORT?: string;
-  DB_USERNAME?: string;
-  DB_PASSWORD?: string;
-  DB_DATABASE?: string;
-  DB_NAME?: string;
-  DB_SSL?: string;
-  DB_SYNCHRONIZE?: string;
-  DB_RUN_MIGRATIONS?: string;
+  MONGO_DB_NAME?: string;
+  MONGOHOST?: string;
+  MONGOPORT?: string;
+  MONGOUSER?: string;
+  MONGOPASSWORD?: string;
+  MONGODATABASE?: string;
+  MONGO_INITDB_ROOT_USERNAME?: string;
+  MONGO_INITDB_ROOT_PASSWORD?: string;
 }
 
 /**
- * Builds shared TypeORM DataSource options for both NestJS runtime and TypeORM CLI.
+ * Resolves the MongoDB connection URI for local development or Railway production.
+ * Throws in production when no MongoDB connection configuration is supplied.
  */
-export function buildDatabaseOptions(env: DatabaseEnvConfig): DataSourceOptions {
-  const databaseUrl = env.DATABASE_URL?.trim();
-  const dbType = (env.DB_TYPE || '').trim().toLowerCase();
-  const migrationsRun = (env.DB_RUN_MIGRATIONS || 'false').trim().toLowerCase() === 'true';
+export function resolveMongoUri(env: MongoEnvConfig): string {
+  const directUri = [env.MONGODB_URI, env.MONGO_URL, env.DATABASE_URL]
+    .map((val) => val?.trim())
+    .find((val) => Boolean(val && /^mongodb(\+srv)?:\/\//i.test(val)));
 
-  const rawSync = env.DB_SYNCHRONIZE?.trim().toLowerCase();
-  const synchronize =
-    rawSync !== undefined && rawSync !== ''
-      ? rawSync !== 'false'
-      : !migrationsRun;
-
-  const migrations = [join(__dirname, 'migrations/*{.ts,.js}')];
-  const usePostgres =
-    dbType === 'postgres' ||
-    Boolean(databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl));
-
-  if (usePostgres) {
-    const useSsl = (env.DB_SSL || '').trim().toLowerCase() === 'true';
-    const basePostgres: Record<string, any> = {
-      type: 'postgres',
-      entities: entityArray,
-      migrations,
-      migrationsRun,
-      synchronize,
-    };
-
-    if (useSsl) {
-      basePostgres.ssl = { rejectUnauthorized: false };
-    }
-
-    if (databaseUrl) {
-      return {
-        ...basePostgres,
-        url: databaseUrl,
-      } as DataSourceOptions;
-    }
-
-    return {
-      ...basePostgres,
-      host: env.DB_HOST || 'localhost',
-      port: Number(env.DB_PORT || 5432),
-      username: env.DB_USERNAME || 'postgres',
-      password: env.DB_PASSWORD || 'postgres',
-      database: env.DB_DATABASE || 'factory_mng',
-    } as DataSourceOptions;
+  if (directUri) {
+    return directUri;
   }
 
-  const location = env.DB_NAME || 'db.sqlite';
-  return {
-    type: 'sqljs',
-    location,
-    autoSave: location !== ':memory:',
-    entities: entityArray,
-    migrations,
-    migrationsRun,
-    synchronize,
-  } as DataSourceOptions;
+  const host = env.MONGOHOST?.trim();
+  if (host) {
+    const port = env.MONGOPORT?.trim() || '27017';
+    const user = (env.MONGOUSER || env.MONGO_INITDB_ROOT_USERNAME)?.trim();
+    const pass = (env.MONGOPASSWORD || env.MONGO_INITDB_ROOT_PASSWORD)?.trim();
+    const dbName = env.MONGODATABASE?.trim() || 'factory_mng';
+    const auth =
+      user && pass ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
+    const authSource = auth ? '?authSource=admin' : '';
+    return `mongodb://${auth}${host}:${port}/${dbName}${authSource}`;
+  }
+
+  if (env.NODE_ENV === 'production') {
+    throw new Error(
+      'MongoDB connection URI is required in production (set MONGODB_URI, MONGO_URL, or DATABASE_URL).',
+    );
+  }
+
+  return 'mongodb://127.0.0.1:27017/factory_mng';
+}
+
+/**
+ * Resolves URI + optional dbName fallback so shared Mongo instances (e.g. Railway
+ * default `MONGO_URL` without a `/dbname` path) stay isolated in `factory_mng`.
+ */
+export function resolveMongoConnectionOptions(env: MongoEnvConfig): {
+  uri: string;
+  dbName?: string;
+} {
+  const uri = resolveMongoUri(env);
+  const explicitDbName = (env.MONGO_DB_NAME || env.MONGODATABASE)?.trim();
+  if (explicitDbName) {
+    return { uri, dbName: explicitDbName };
+  }
+
+  try {
+    const parsed = new URL(uri);
+    if (!parsed.pathname || parsed.pathname === '/') {
+      return { uri, dbName: 'factory_mng' };
+    }
+  } catch {
+    // Fallback to URI as-is if multi-host seedlist fails URL() parsing
+  }
+
+  return { uri };
 }

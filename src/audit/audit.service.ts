@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { AuditLog } from '../database/entities/workflow-audit.entity';
 
 @Injectable()
 export class AuditService {
   constructor(
-    @InjectRepository(AuditLog) private auditRepo: Repository<AuditLog>
+    @InjectModel(AuditLog.name) private auditModel: Model<AuditLog>,
   ) {}
 
   async log(params: {
@@ -21,22 +21,18 @@ export class AuditService {
     const beforeStr = params.beforeState ? JSON.stringify(params.beforeState) : null;
     const afterStr = params.afterState ? JSON.stringify(params.afterState) : null;
 
-    const logEntry = this.auditRepo.create({
+    return this.auditModel.create({
       action: params.action,
       entityName: params.entityName,
       entityId: params.entityId,
       beforeState: beforeStr,
       afterState: afterStr,
-      userEmail: params.userEmail,
-      ipAddress: params.ipAddress || '127.0.0.1'
+      userEmail: params.userEmail ?? null,
+      ipAddress: params.ipAddress || '127.0.0.1',
     });
-
-    return this.auditRepo.save(logEntry);
   }
 
   async findAll() {
-    return this.auditRepo.find({
-      order: { createdAt: 'DESC' }
-    });
+    return this.auditModel.find().sort({ createdAt: -1 }).exec();
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import {
   SalesOrder,
   PurchaseOrder,
@@ -11,64 +11,68 @@ import {
   SalesOrderStatus,
   ApprovalStatus,
   WorkOrderStatus,
-  QAStatus
+  QAStatus,
 } from '../database/entities';
 
 @Injectable()
 export class ReportsService {
   constructor(
-    @InjectRepository(SalesOrder) private soRepo: Repository<SalesOrder>,
-    @InjectRepository(PurchaseOrder) private poRepo: Repository<PurchaseOrder>,
-    @InjectRepository(WorkOrder) private woRepo: Repository<WorkOrder>,
-    @InjectRepository(Stock) private stockRepo: Repository<Stock>,
-    @InjectRepository(QualityInspection) private qaRepo: Repository<QualityInspection>,
-    @InjectRepository(AuditLog) private auditRepo: Repository<AuditLog>
+    @InjectModel(SalesOrder.name) private soModel: Model<SalesOrder>,
+    @InjectModel(PurchaseOrder.name) private poModel: Model<PurchaseOrder>,
+    @InjectModel(WorkOrder.name) private woModel: Model<WorkOrder>,
+    @InjectModel(Stock.name) private stockModel: Model<Stock>,
+    @InjectModel(QualityInspection.name) private qaModel: Model<QualityInspection>,
+    @InjectModel(AuditLog.name) private auditModel: Model<AuditLog>,
   ) {}
 
   async getDashboardData() {
-    // 1. KPIs
-    const totalSalesList = await this.soRepo.find({
-      where: { status: SalesOrderStatus.DELIVERED }
-    });
+    const totalSalesList = await this.soModel
+      .find({ status: SalesOrderStatus.DELIVERED })
+      .exec();
     const totalSales = totalSalesList.reduce((sum, item) => sum + Number(item.totalAmount), 0);
 
-    const totalPurchasingList = await this.poRepo.find({
-      where: { status: ApprovalStatus.APPROVED }
-    });
+    const totalPurchasingList = await this.poModel
+      .find({ status: ApprovalStatus.APPROVED })
+      .exec();
     const totalPurchasing = totalPurchasingList.reduce((sum, item) => sum + Number(item.totalAmount), 0);
 
-    const activeWOs = await this.woRepo.countBy({
-      status: WorkOrderStatus.IN_PRODUCTION
-    });
+    const activeWOs = await this.woModel
+      .countDocuments({ status: WorkOrderStatus.IN_PRODUCTION })
+      .exec();
 
-    const lowStockItems = await this.stockRepo.countBy([
-      { status: 'LOW' },
-      { status: 'OUT' }
-    ]);
+    const lowStockItems = await this.stockModel
+      .countDocuments({ status: { $in: ['LOW', 'OUT'] } })
+      .exec();
 
-    // 2. QA Pass Rate
-    const qaInspections = await this.qaRepo.find();
+    const qaInspections = await this.qaModel.find().exec();
     const passedCount = qaInspections.filter((ins) => ins.status === QAStatus.PASS).length;
     const totalInspections = qaInspections.length;
     const qaPassRate = totalInspections > 0 ? Math.round((passedCount / totalInspections) * 100) : 100;
 
-    // 3. Sales vs Costs breakdown (Mock monthly for chart compatibility)
     const salesAndCostsChart = [
       { month: 'Jan', sales: totalSales * 0.15, costs: totalPurchasing * 0.16 },
       { month: 'Feb', sales: totalSales * 0.18, costs: totalPurchasing * 0.15 },
       { month: 'Mar', sales: totalSales * 0.22, costs: totalPurchasing * 0.20 },
       { month: 'Apr', sales: totalSales * 0.20, costs: totalPurchasing * 0.18 },
       { month: 'May', sales: totalSales * 0.25, costs: totalPurchasing * 0.31 },
-      { month: 'Jun', sales: totalSales, costs: totalPurchasing }, // Cumulative/Current
+      { month: 'Jun', sales: totalSales, costs: totalPurchasing },
     ];
 
-    // 4. Production Status Breakdown
-    const draftWOs = await this.woRepo.countBy({ status: WorkOrderStatus.DRAFT });
-    const pendingMatWOs = await this.woRepo.countBy({ status: WorkOrderStatus.PENDING_MATERIAL });
-    const issuedWOs = await this.woRepo.countBy({ status: WorkOrderStatus.MATERIAL_ISSUED });
-    const inProdWOs = await this.woRepo.countBy({ status: WorkOrderStatus.IN_PRODUCTION });
-    const pendingQaWOs = await this.woRepo.countBy({ status: WorkOrderStatus.PENDING_QA });
-    const completedWOs = await this.woRepo.countBy({ status: WorkOrderStatus.COMPLETED });
+    const [
+      draftWOs,
+      pendingMatWOs,
+      issuedWOs,
+      inProdWOs,
+      pendingQaWOs,
+      completedWOs,
+    ] = await Promise.all([
+      this.woModel.countDocuments({ status: WorkOrderStatus.DRAFT }).exec(),
+      this.woModel.countDocuments({ status: WorkOrderStatus.PENDING_MATERIAL }).exec(),
+      this.woModel.countDocuments({ status: WorkOrderStatus.MATERIAL_ISSUED }).exec(),
+      this.woModel.countDocuments({ status: WorkOrderStatus.IN_PRODUCTION }).exec(),
+      this.woModel.countDocuments({ status: WorkOrderStatus.PENDING_QA }).exec(),
+      this.woModel.countDocuments({ status: WorkOrderStatus.COMPLETED }).exec(),
+    ]);
 
     const productionBreakdown = {
       draft: draftWOs,
@@ -76,14 +80,14 @@ export class ReportsService {
       materialIssued: issuedWOs,
       inProduction: inProdWOs,
       pendingQA: pendingQaWOs,
-      completed: completedWOs
+      completed: completedWOs,
     };
 
-    // 5. Recent audit logs
-    const recentLogs = await this.auditRepo.find({
-      order: { createdAt: 'DESC' },
-      take: 6
-    });
+    const recentLogs = await this.auditModel
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .exec();
 
     return {
       kpis: {
@@ -92,7 +96,7 @@ export class ReportsService {
         netMargin: totalSales - totalPurchasing,
         activeWOs,
         lowStockItems,
-        qaPassRate
+        qaPassRate,
       },
       salesAndCostsChart,
       productionBreakdown,
@@ -101,8 +105,8 @@ export class ReportsService {
         userEmail: l.userEmail || 'System',
         action: l.action,
         entityName: l.entityName,
-        createdAt: l.createdAt
-      }))
+        createdAt: l.createdAt,
+      })),
     };
   }
 }

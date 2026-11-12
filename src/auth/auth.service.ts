@@ -1,26 +1,24 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
-import { User } from '../database/entities/rbac.entity';
+import { User, extractUserAccess, isValidObjectId } from '../database/entities';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User) private userRepo: Repository<User>,
-    private jwtService: JwtService
+    @InjectModel(User.name) private userModel: Model<User>,
+    private jwtService: JwtService,
   ) {}
 
   async login(email: string, password: string) {
-    const user = await this.userRepo
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.roles', 'roles')
-      .leftJoinAndSelect('roles.permissions', 'permissions')
-      .addSelect('user.passwordHash')
-      .where('user.email = :email', { email })
-      .andWhere('user.isActive = :isActive', { isActive: true })
-      .getOne();
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.userModel
+      .findOne({ email: normalizedEmail, isActive: true })
+      .select('+passwordHash')
+      .populate({ path: 'roles', populate: { path: 'permissions' } })
+      .exec();
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
@@ -33,14 +31,7 @@ export class AuthService {
 
     const payload = { email: user.email, sub: user.id, tokenVersion: user.tokenVersion ?? 0 };
     const accessToken = this.jwtService.sign(payload);
-
-    // Extract flat permission list
-    const permissions = new Set<string>();
-    user.roles.forEach((role) => {
-      role.permissions?.forEach((perm) => {
-        permissions.add(perm.code);
-      });
-    });
+    const { roleNames, permissions } = extractUserAccess(user);
 
     return {
       accessToken,
@@ -48,50 +39,53 @@ export class AuthService {
         id: user.id,
         email: user.email,
         fullName: user.fullName,
-        roles: user.roles.map((r) => r.name),
-        permissions: Array.from(permissions),
+        roles: roleNames,
+        permissions,
       },
     };
   }
 
   async getMe(userId: string) {
-    const user = await this.userRepo.findOne({
-      where: { id: userId, isActive: true },
-      relations: { roles: { permissions: true } },
-    });
+    if (!isValidObjectId(userId)) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const user = await this.userModel
+      .findOne({ _id: userId, isActive: true })
+      .populate({ path: 'roles', populate: { path: 'permissions' } })
+      .exec();
 
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
 
-    const permissions = new Set<string>();
-    user.roles.forEach((role) => {
-      role.permissions?.forEach((perm) => {
-        permissions.add(perm.code);
-      });
-    });
+    const { roleNames, permissions } = extractUserAccess(user);
 
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
-      roles: user.roles.map((r) => r.name),
-      permissions: Array.from(permissions),
+      roles: roleNames,
+      permissions,
     };
   }
 
   async logout(userId: string) {
-    await this.userRepo.increment({ id: userId }, 'tokenVersion', 1);
+    if (isValidObjectId(userId)) {
+      await this.userModel.updateOne({ _id: userId }, { $inc: { tokenVersion: 1 } }).exec();
+    }
     return { status: 'success', message: 'Logged out successfully' };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    const user = await this.userRepo
-      .createQueryBuilder('user')
-      .addSelect('user.passwordHash')
-      .where('user.id = :id', { id: userId })
-      .andWhere('user.isActive = :isActive', { isActive: true })
-      .getOne();
+    if (!isValidObjectId(userId)) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const user = await this.userModel
+      .findOne({ _id: userId, isActive: true })
+      .select('+passwordHash')
+      .exec();
 
     if (!user) {
       throw new UnauthorizedException('User not found');
@@ -108,7 +102,7 @@ export class AuthService {
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     user.tokenVersion = (user.tokenVersion ?? 0) + 1;
-    await this.userRepo.save(user);
+    await user.save();
 
     const accessToken = this.jwtService.sign({
       email: user.email,

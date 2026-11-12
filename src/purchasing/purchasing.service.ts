@@ -1,13 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import {
   PurchaseRequest,
-  PurchaseRequestItem,
   PurchaseOrder,
-  PurchaseOrderItem,
   GoodsReceipt,
-  GoodsReceiptItem,
   ApprovalWorkflow,
   ApprovalStep,
   ApprovalHistory,
@@ -16,7 +13,10 @@ import {
   Product,
   Supplier,
   User,
-  Role
+  isValidObjectId,
+  refId,
+  asDoc,
+  extractUserAccess,
 } from '../database/entities';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
@@ -24,44 +24,45 @@ import { AuditService } from '../audit/audit.service';
 @Injectable()
 export class PurchasingService {
   constructor(
-    @InjectRepository(PurchaseRequest) private prRepo: Repository<PurchaseRequest>,
-    @InjectRepository(PurchaseRequestItem) private prItemRepo: Repository<PurchaseRequestItem>,
-    @InjectRepository(PurchaseOrder) private poRepo: Repository<PurchaseOrder>,
-    @InjectRepository(PurchaseOrderItem) private poItemRepo: Repository<PurchaseOrderItem>,
-    @InjectRepository(GoodsReceipt) private grRepo: Repository<GoodsReceipt>,
-    @InjectRepository(GoodsReceiptItem) private grItemRepo: Repository<GoodsReceiptItem>,
-    @InjectRepository(ApprovalWorkflow) private workflowRepo: Repository<ApprovalWorkflow>,
-    @InjectRepository(ApprovalStep) private stepRepo: Repository<ApprovalStep>,
-    @InjectRepository(ApprovalHistory) private historyRepo: Repository<ApprovalHistory>,
-    @InjectRepository(Product) private productRepo: Repository<Product>,
-    @InjectRepository(Supplier) private supplierRepo: Repository<Supplier>,
-    @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectModel(PurchaseRequest.name) private prModel: Model<PurchaseRequest>,
+    @InjectModel(PurchaseOrder.name) private poModel: Model<PurchaseOrder>,
+    @InjectModel(GoodsReceipt.name) private grModel: Model<GoodsReceipt>,
+    @InjectModel(ApprovalWorkflow.name) private workflowModel: Model<ApprovalWorkflow>,
+    @InjectModel(ApprovalStep.name) private stepModel: Model<ApprovalStep>,
+    @InjectModel(ApprovalHistory.name) private historyModel: Model<ApprovalHistory>,
+    @InjectModel(Product.name) private productModel: Model<Product>,
+    @InjectModel(Supplier.name) private supplierModel: Model<Supplier>,
+    @InjectModel(User.name) private userModel: Model<User>,
     private notificationsService: NotificationsService,
-    private auditService: AuditService
+    private auditService: AuditService,
   ) {}
 
   // --- PURCHASE REQUESTS (PR) ---
 
   async findPRs() {
-    return this.prRepo.find({
-      relations: { requester: true, items: { product: true } },
-      order: { code: 'DESC' }
-    });
+    return this.prModel
+      .find()
+      .populate(['requester', 'items.product'])
+      .sort({ code: -1 })
+      .exec();
   }
 
   async findPR(id: string) {
-    let pr = await this.prRepo.findOne({
-      where: { id },
-      relations: { requester: true, items: { product: true } }
-    });
+    let pr: any = null;
+    if (isValidObjectId(id)) {
+      pr = await this.prModel
+        .findById(id)
+        .populate(['requester', 'items.product'])
+        .exec();
+    }
     if (!pr && id.startsWith('pr-')) {
       const idx = parseInt(id.substring(3), 10);
       if (!isNaN(idx)) {
         const code = `PR-2026-${String(idx).padStart(5, '0')}`;
-        pr = await this.prRepo.findOne({
-          where: { code },
-          relations: { requester: true, items: { product: true } }
-        });
+        pr = await this.prModel
+          .findOne({ code })
+          .populate(['requester', 'items.product'])
+          .exec();
       }
     }
     if (!pr) throw new NotFoundException('Purchase Request not found');
@@ -70,7 +71,7 @@ export class PurchasingService {
 
   async createPR(
     user: User,
-    itemsDto: Array<{ productId: string; quantity: number; estimatedPrice: number }>
+    itemsDto: Array<{ productId: string; quantity: number; estimatedPrice: number }>,
   ) {
     if (!Array.isArray(itemsDto) || itemsDto.length === 0) {
       throw new BadRequestException('Purchase request must include at least one item');
@@ -85,40 +86,49 @@ export class PurchasingService {
       }
     }
 
-    const prCount = await this.prRepo.count();
+    const prCount = await this.prModel.countDocuments().exec();
     const code = `PR-2026-${String(prCount + 1).padStart(5, '0')}`;
 
     let totalAmount = 0;
-    const items: PurchaseRequestItem[] = [];
+    const items: Array<{ product: any; quantity: number; estimatedPrice: number; totalPrice: number }> = [];
 
     for (const itemDto of itemsDto) {
-      const product = await this.productRepo.findOneBy({ id: itemDto.productId });
+      if (!isValidObjectId(itemDto.productId)) {
+        throw new NotFoundException(`Product ${itemDto.productId} not found`);
+      }
+      const product = await this.productModel.findById(itemDto.productId).exec();
       if (!product) throw new NotFoundException(`Product ${itemDto.productId} not found`);
 
       const totalPrice = itemDto.quantity * itemDto.estimatedPrice;
       totalAmount += totalPrice;
 
-      const item = this.prItemRepo.create({
-        product,
+      items.push({
+        product: product._id,
         quantity: itemDto.quantity,
         estimatedPrice: itemDto.estimatedPrice,
-        totalPrice
+        totalPrice,
       });
-      items.push(item);
     }
 
-    const pr = this.prRepo.create({
+    const created = await this.prModel.create({
       code,
-      requester: user,
+      requester: refId(user),
       status: ApprovalStatus.DRAFT,
       totalAmount,
-      items
+      items,
     });
 
-    const savedPr = await this.prRepo.save(pr);
+    await this.logApprovalHistory(
+      'PURCHASE_REQUEST',
+      created.id,
+      user,
+      'CREATE',
+      'Created draft Purchase Request',
+      null,
+      ApprovalStatus.DRAFT,
+    );
 
-    await this.logApprovalHistory('PURCHASE_REQUEST', savedPr.id, user, 'CREATE', 'Created draft Purchase Request', null, ApprovalStatus.DRAFT);
-    return savedPr;
+    return this.findPR(created.id);
   }
 
   async submitPR(id: string, user: User) {
@@ -127,53 +137,59 @@ export class PurchasingService {
       throw new BadRequestException('Only DRAFT purchase requests can be submitted');
     }
 
-    // Determine Approval Workflow based on amount
-    const workflow = await this.workflowRepo.findOne({
-      where: { targetType: 'PURCHASE_REQUEST', isActive: true },
-      // Check which workflow matches the PR amount bounds
-    });
-
-    // Let's query workflows and find the one where totalAmount falls within min/max
-    const workflows = await this.workflowRepo.find({
-      where: { targetType: 'PURCHASE_REQUEST', isActive: true }
-    });
+    const workflows = await this.workflowModel
+      .find({ targetType: 'PURCHASE_REQUEST', isActive: true })
+      .exec();
 
     const matchingWorkflow = workflows.find(
-      (w) => pr.totalAmount >= Number(w.minAmount) && pr.totalAmount <= Number(w.maxAmount)
+      (w) => pr.totalAmount >= Number(w.minAmount) && pr.totalAmount <= Number(w.maxAmount),
     );
 
     if (!matchingWorkflow) {
-      // Direct approval if no workflow configured
       pr.status = ApprovalStatus.APPROVED;
-      await this.prRepo.save(pr);
-      await this.logApprovalHistory('PURCHASE_REQUEST', pr.id, user, 'AUTO_APPROVE', 'Auto-approved, no matching threshold workflow', ApprovalStatus.DRAFT, ApprovalStatus.APPROVED);
+      await pr.save();
+      await this.logApprovalHistory(
+        'PURCHASE_REQUEST',
+        pr.id,
+        user,
+        'AUTO_APPROVE',
+        'Auto-approved, no matching threshold workflow',
+        ApprovalStatus.DRAFT,
+        ApprovalStatus.APPROVED,
+      );
       await this.generatePOFromPR(pr, user);
       return pr;
     }
 
-    // Start approval steps
     pr.status = ApprovalStatus.PENDING_APPROVAL;
-    const savedPr = await this.prRepo.save(pr);
+    await pr.save();
 
-    // Find first step
-    const firstStep = await this.stepRepo.findOne({
-      where: { workflow: { id: matchingWorkflow.id }, stepOrder: 1 },
-      relations: { role: true }
-    });
+    const firstStep = await this.stepModel
+      .findOne({ workflow: matchingWorkflow._id, stepOrder: 1 })
+      .populate('role')
+      .exec();
 
-    await this.logApprovalHistory('PURCHASE_REQUEST', pr.id, user, 'SUBMIT', 'Submitted for approval', ApprovalStatus.DRAFT, ApprovalStatus.PENDING_APPROVAL);
+    await this.logApprovalHistory(
+      'PURCHASE_REQUEST',
+      pr.id,
+      user,
+      'SUBMIT',
+      'Submitted for approval',
+      ApprovalStatus.DRAFT,
+      ApprovalStatus.PENDING_APPROVAL,
+    );
 
-    if (firstStep) {
+    if (firstStep?.role) {
       await this.notificationsService.create({
         title: 'PR Pending Approval',
         message: `Purchase Request ${pr.code} (Total: ${pr.totalAmount} THB) is waiting for approval`,
-        recipientRole: firstStep.role.name,
+        recipientRole: asDoc(firstStep.role).name,
         entityType: 'PURCHASE_REQUEST',
-        entityId: pr.id
+        entityId: pr.id,
       });
     }
 
-    return savedPr;
+    return this.findPR(pr.id);
   }
 
   async approvePR(id: string, comment: string, user: User) {
@@ -182,51 +198,67 @@ export class PurchasingService {
       throw new BadRequestException('Request is not pending approval');
     }
 
-    // Find matching workflow
-    const workflows = await this.workflowRepo.find({ where: { targetType: 'PURCHASE_REQUEST', isActive: true } });
+    const workflows = await this.workflowModel
+      .find({ targetType: 'PURCHASE_REQUEST', isActive: true })
+      .exec();
     const matchingWorkflow = workflows.find(
-      (w) => pr.totalAmount >= Number(w.minAmount) && pr.totalAmount <= Number(w.maxAmount)
+      (w) => pr.totalAmount >= Number(w.minAmount) && pr.totalAmount <= Number(w.maxAmount),
     );
 
     if (!matchingWorkflow) {
       pr.status = ApprovalStatus.APPROVED;
-      await this.prRepo.save(pr);
-      await this.logApprovalHistory('PURCHASE_REQUEST', pr.id, user, 'APPROVE', comment, ApprovalStatus.PENDING_APPROVAL, ApprovalStatus.APPROVED);
+      await pr.save();
+      await this.logApprovalHistory(
+        'PURCHASE_REQUEST',
+        pr.id,
+        user,
+        'APPROVE',
+        comment,
+        ApprovalStatus.PENDING_APPROVAL,
+        ApprovalStatus.APPROVED,
+      );
       await this.generatePOFromPR(pr, user);
       return pr;
     }
 
-    // Get current approved steps from history
-    const history = await this.historyRepo.find({
-      where: { entityType: 'PURCHASE_REQUEST', entityId: pr.id, action: 'APPROVE' },
-      order: { createdAt: 'ASC' }
-    });
+    const history = await this.historyModel
+      .find({ entityType: 'PURCHASE_REQUEST', entityId: pr.id, action: 'APPROVE' })
+      .sort({ createdAt: 1 })
+      .exec();
 
-    const steps = await this.stepRepo.find({
-      where: { workflow: { id: matchingWorkflow.id } },
-      relations: { role: true },
-      order: { stepOrder: 'ASC' }
-    });
+    const steps = await this.stepModel
+      .find({ workflow: matchingWorkflow._id })
+      .populate('role')
+      .sort({ stepOrder: 1 })
+      .exec();
 
-    const nextStepIndex = history.length; // E.g. if 0 approved, next index is 0 (stepOrder 1)
+    const nextStepIndex = history.length;
 
     if (nextStepIndex >= steps.length) {
-      // Already fully approved
       pr.status = ApprovalStatus.APPROVED;
-      await this.prRepo.save(pr);
-      await this.logApprovalHistory('PURCHASE_REQUEST', pr.id, user, 'APPROVE', comment, ApprovalStatus.PENDING_APPROVAL, ApprovalStatus.APPROVED);
+      await pr.save();
+      await this.logApprovalHistory(
+        'PURCHASE_REQUEST',
+        pr.id,
+        user,
+        'APPROVE',
+        comment,
+        ApprovalStatus.PENDING_APPROVAL,
+        ApprovalStatus.APPROVED,
+      );
       await this.generatePOFromPR(pr, user);
       return pr;
     }
 
     const currentStepToApprove = steps[nextStepIndex];
-    // Check if user has the role required for current step
-    const userHasRole = user.roles.some((r) => r.id === currentStepToApprove.role.id || r.name === 'Super Admin');
+    const stepRole = asDoc(currentStepToApprove.role);
+    const { roleNames, roleIds } = extractUserAccess(user);
+    const userHasRole = roleIds.includes(stepRole.id) || roleNames.includes('Super Admin');
     if (!userHasRole) {
-      throw new BadRequestException(`Approver must have the role: ${currentStepToApprove.role.name}`);
+      throw new BadRequestException(`Approver must have the role: ${stepRole.name}`);
     }
 
-    // Log this step approval
+    const isLastStep = nextStepIndex === steps.length - 1;
     await this.logApprovalHistory(
       'PURCHASE_REQUEST',
       pr.id,
@@ -234,34 +266,30 @@ export class PurchasingService {
       'APPROVE',
       `Step ${currentStepToApprove.stepOrder} Approved: ${comment}`,
       ApprovalStatus.PENDING_APPROVAL,
-      nextStepIndex === steps.length - 1 ? ApprovalStatus.APPROVED : ApprovalStatus.PENDING_APPROVAL
+      isLastStep ? ApprovalStatus.APPROVED : ApprovalStatus.PENDING_APPROVAL,
     );
 
-    if (nextStepIndex === steps.length - 1) {
-      // Last step approved
+    if (isLastStep) {
       pr.status = ApprovalStatus.APPROVED;
-      await this.prRepo.save(pr);
+      await pr.save();
 
-      // Notify requester
       await this.notificationsService.create({
         title: 'PR Approved',
         message: `Your Purchase Request ${pr.code} has been approved.`,
-        recipientId: pr.requester.id,
+        recipientId: pr.requester?.id ?? String(pr.requester),
         entityType: 'PURCHASE_REQUEST',
-        entityId: pr.id
+        entityId: pr.id,
       });
 
-      // Automatically generate PO
       await this.generatePOFromPR(pr, user);
     } else {
-      // Advance to next step
       const nextStep = steps[nextStepIndex + 1];
       await this.notificationsService.create({
         title: 'PR Pending Approval (Next Step)',
         message: `Purchase Request ${pr.code} (Total: ${pr.totalAmount} THB) is waiting for step ${nextStep.stepOrder} approval.`,
-        recipientRole: nextStep.role.name,
+        recipientRole: asDoc(nextStep.role).name,
         entityType: 'PURCHASE_REQUEST',
-        entityId: pr.id
+        entityId: pr.id,
       });
     }
 
@@ -275,16 +303,24 @@ export class PurchasingService {
     }
 
     pr.status = ApprovalStatus.REJECTED;
-    await this.prRepo.save(pr);
+    await pr.save();
 
-    await this.logApprovalHistory('PURCHASE_REQUEST', pr.id, user, 'REJECT', comment, ApprovalStatus.PENDING_APPROVAL, ApprovalStatus.REJECTED);
+    await this.logApprovalHistory(
+      'PURCHASE_REQUEST',
+      pr.id,
+      user,
+      'REJECT',
+      comment,
+      ApprovalStatus.PENDING_APPROVAL,
+      ApprovalStatus.REJECTED,
+    );
 
     await this.notificationsService.create({
       title: 'PR Rejected',
       message: `Your Purchase Request ${pr.code} was rejected. Reason: ${comment}`,
-      recipientId: pr.requester.id,
+      recipientId: pr.requester?.id ?? String(pr.requester),
       entityType: 'PURCHASE_REQUEST',
-      entityId: pr.id
+      entityId: pr.id,
     });
 
     return pr;
@@ -293,25 +329,29 @@ export class PurchasingService {
   // --- PURCHASE ORDERS (PO) ---
 
   async findPOs() {
-    return this.poRepo.find({
-      relations: { supplier: true, buyer: true, items: { product: true } },
-      order: { code: 'DESC' }
-    });
+    return this.poModel
+      .find()
+      .populate(['supplier', 'buyer', 'items.product'])
+      .sort({ code: -1 })
+      .exec();
   }
 
   async findPO(id: string) {
-    let po = await this.poRepo.findOne({
-      where: { id },
-      relations: { supplier: true, buyer: true, items: { product: true } }
-    });
+    let po: any = null;
+    if (isValidObjectId(id)) {
+      po = await this.poModel
+        .findById(id)
+        .populate(['supplier', 'buyer', 'items.product'])
+        .exec();
+    }
     if (!po && id.startsWith('po-')) {
       const idx = parseInt(id.substring(3), 10);
       if (!isNaN(idx)) {
         const code = `PO-2026-${String(idx).padStart(5, '0')}`;
-        po = await this.poRepo.findOne({
-          where: { code },
-          relations: { supplier: true, buyer: true, items: { product: true } }
-        });
+        po = await this.poModel
+          .findOne({ code })
+          .populate(['supplier', 'buyer', 'items.product'])
+          .exec();
       }
     }
     if (!po) throw new NotFoundException('Purchase Order not found');
@@ -319,60 +359,58 @@ export class PurchasingService {
   }
 
   private async generatePOFromPR(pr: PurchaseRequest, user: User) {
-    const poCount = await this.poRepo.count();
+    const poCount = await this.poModel.countDocuments().exec();
     const code = `PO-2026-${String(poCount + 1).padStart(5, '0')}`;
 
-    // Find default supplier for PO (usually set by buyer; we pick ABC Manufacturing or default supplier of first product)
-    const supplier = await this.supplierRepo.findOne({ order: { name: 'ASC' } });
-    if (!supplier) return; // Silent skip if no supplier is registered yet
+    const supplier = await this.supplierModel.findOne().sort({ name: 1 }).exec();
+    if (!supplier) return;
 
-    const poItems: PurchaseOrderItem[] = [];
-    pr.items.forEach((prItem) => {
-      const poItem = this.poItemRepo.create({
-        product: prItem.product,
-        quantity: prItem.quantity,
-        price: prItem.estimatedPrice,
-        totalPrice: prItem.totalPrice
-      });
-      poItems.push(poItem);
-    });
+    const poItems = pr.items.map((prItem) => ({
+      product: refId(prItem.product),
+      quantity: prItem.quantity,
+      price: prItem.estimatedPrice,
+      totalPrice: prItem.totalPrice,
+    }));
 
-    const po = this.poRepo.create({
+    const po = await this.poModel.create({
       code,
-      supplier,
-      buyer: user,
-      status: ApprovalStatus.APPROVED, // Auto approve PO if PR is approved
+      supplier: supplier._id,
+      buyer: refId(user),
+      status: ApprovalStatus.APPROVED,
       totalAmount: pr.totalAmount,
       items: poItems,
-      purchaseRequest: pr
+      purchaseRequest: pr._id,
     });
 
-    await this.poRepo.save(po);
-
-    // Notify purchasing team
     await this.notificationsService.create({
       title: 'New PO Generated',
       message: `Purchase Order ${code} has been generated from PR ${pr.code}`,
       recipientRole: 'Purchasing',
       entityType: 'PURCHASE_ORDER',
-      entityId: po.id
+      entityId: po.id,
     });
   }
 
   // --- GOODS RECEIPTS (GR) ---
 
   async findGRs() {
-    return this.grRepo.find({
-      relations: { purchaseOrder: { supplier: true }, receivedBy: true, items: { product: true } },
-      order: { code: 'DESC' }
-    });
+    return this.grModel
+      .find()
+      .populate({ path: 'purchaseOrder', populate: { path: 'supplier' } })
+      .populate(['receivedBy', 'items.product'])
+      .sort({ code: -1 })
+      .exec();
   }
 
   async findGR(id: string) {
-    const gr = await this.grRepo.findOne({
-      where: { id },
-      relations: { purchaseOrder: { supplier: true }, receivedBy: true, items: { product: true } }
-    });
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Goods Receipt not found');
+    }
+    const gr = await this.grModel
+      .findById(id)
+      .populate({ path: 'purchaseOrder', populate: { path: 'supplier' } })
+      .populate(['receivedBy', 'items.product'])
+      .exec();
     if (!gr) throw new NotFoundException('Goods Receipt not found');
     return gr;
   }
@@ -380,62 +418,69 @@ export class PurchasingService {
   async createGR(
     poId: string,
     receivedById: string,
-    itemsDto: Array<{ productId: string; quantityReceived: number }>
+    itemsDto: Array<{ productId: string; quantityReceived: number }>,
   ) {
     const po = await this.findPO(poId);
-    const receivedBy = await this.userRepo.findOneBy({ id: receivedById });
+    if (!isValidObjectId(receivedById)) {
+      throw new NotFoundException('Receiving user not found');
+    }
+    const receivedBy = await this.userModel.findById(receivedById).exec();
 
     if (!receivedBy) throw new NotFoundException('Receiving user not found');
     if (po.status !== ApprovalStatus.APPROVED) {
       throw new BadRequestException('Can only receive goods for an APPROVED Purchase Order');
     }
 
-    const grCount = await this.grRepo.count();
+    const grCount = await this.grModel.countDocuments().exec();
     const code = `GR-2026-${String(grCount + 1).padStart(5, '0')}`;
 
-    const items: GoodsReceiptItem[] = [];
+    const items: Array<{
+      product: any;
+      quantityReceived: number;
+      quantityAccepted: number;
+      quantityRejected: number;
+    }> = [];
+
     for (const itemDto of itemsDto) {
-      const product = await this.productRepo.findOneBy({ id: itemDto.productId });
+      if (!isValidObjectId(itemDto.productId)) {
+        throw new NotFoundException(`Product ${itemDto.productId} not found`);
+      }
+      const product = await this.productModel.findById(itemDto.productId).exec();
       if (!product) throw new NotFoundException(`Product ${itemDto.productId} not found`);
 
-      const item = this.grItemRepo.create({
-        product,
+      items.push({
+        product: product._id,
         quantityReceived: itemDto.quantityReceived,
         quantityAccepted: 0,
-        quantityRejected: 0
+        quantityRejected: 0,
       });
-      items.push(item);
     }
 
-    const gr = this.grRepo.create({
+    const created = await this.grModel.create({
       code,
-      purchaseOrder: po,
-      receivedBy,
+      purchaseOrder: po._id,
+      receivedBy: receivedBy._id,
       status: GoodsReceiptStatus.PENDING_QA,
-      items
+      items,
     });
 
-    const savedGr = await this.grRepo.save(gr);
-
-    // Notify QA to inspect the shipment
     await this.notificationsService.create({
       title: 'Goods QA Inspection Required',
       message: `Goods Receipt ${code} (PO: ${po.code}) requires quality inspection.`,
       recipientRole: 'QA',
       entityType: 'GOODS_RECEIPT',
-      entityId: savedGr.id
+      entityId: created.id,
     });
 
-    // Log to Audit Log
     await this.auditService.log({
       action: 'CREATE_GOODS_RECEIPT',
       entityName: 'GoodsReceipt',
-      entityId: savedGr.id,
+      entityId: created.id,
       afterState: { code, poCode: po.code },
-      userEmail: receivedBy.email
+      userEmail: receivedBy.email,
     });
 
-    return savedGr;
+    return this.findGR(created.id);
   }
 
   // --- HELPERS ---
@@ -447,25 +492,24 @@ export class PurchasingService {
     action: string,
     comment: string,
     previousStatus: string | null,
-    newStatus: string | null
+    newStatus: string | null,
   ) {
-    const history = this.historyRepo.create({
+    await this.historyModel.create({
       entityType,
       entityId,
-      user,
+      user: refId(user),
       action,
       comment,
-      previousStatus: previousStatus ?? undefined,
-      newStatus: newStatus ?? undefined
+      previousStatus,
+      newStatus,
     });
-    await this.historyRepo.save(history);
   }
 
   async getApprovalHistory(entityType: string, entityId: string) {
-    return this.historyRepo.find({
-      where: { entityType, entityId },
-      relations: { user: true },
-      order: { createdAt: 'ASC' }
-    });
+    return this.historyModel
+      .find({ entityType, entityId })
+      .populate('user')
+      .sort({ createdAt: 1 })
+      .exec();
   }
 }

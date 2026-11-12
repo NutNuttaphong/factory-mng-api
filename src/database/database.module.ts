@@ -1,45 +1,122 @@
-import { Logger, Module } from '@nestjs/common';
-import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DatabaseSeedService } from './database-seed.service';
-import { buildDatabaseOptions, entityArray } from './database-config.util';
+import { resolveMongoConnectionOptions } from './database-config.util';
+import {
+  Permission,
+  PermissionSchema,
+  Role,
+  RoleSchema,
+  User,
+  UserSchema,
+  Category,
+  CategorySchema,
+  Unit,
+  UnitSchema,
+  Supplier,
+  SupplierSchema,
+  Customer,
+  CustomerSchema,
+  Warehouse,
+  WarehouseSchema,
+  Product,
+  ProductSchema,
+  PurchaseRequest,
+  PurchaseRequestSchema,
+  PurchaseOrder,
+  PurchaseOrderSchema,
+  GoodsReceipt,
+  GoodsReceiptSchema,
+  Stock,
+  StockSchema,
+  StockMovement,
+  StockMovementSchema,
+  BOM,
+  BOMSchema,
+  ProductionPlan,
+  ProductionPlanSchema,
+  WorkOrder,
+  WorkOrderSchema,
+  MaterialIssue,
+  MaterialIssueSchema,
+  ProductionResult,
+  ProductionResultSchema,
+  QualityInspection,
+  QualityInspectionSchema,
+  QualityDefect,
+  QualityDefectSchema,
+  SalesOrder,
+  SalesOrderSchema,
+  Delivery,
+  DeliverySchema,
+  ApprovalWorkflow,
+  ApprovalWorkflowSchema,
+  ApprovalStep,
+  ApprovalStepSchema,
+  ApprovalHistory,
+  ApprovalHistorySchema,
+  AuditLog,
+  AuditLogSchema,
+  Notification,
+  NotificationSchema,
+} from './entities';
 
-const logger = new Logger('DatabaseModule');
+export const MONGOOSE_FEATURES = [
+  { name: Permission.name, schema: PermissionSchema },
+  { name: Role.name, schema: RoleSchema },
+  { name: User.name, schema: UserSchema },
+  { name: Category.name, schema: CategorySchema },
+  { name: Unit.name, schema: UnitSchema },
+  { name: Supplier.name, schema: SupplierSchema },
+  { name: Customer.name, schema: CustomerSchema },
+  { name: Warehouse.name, schema: WarehouseSchema },
+  { name: Product.name, schema: ProductSchema },
+  { name: PurchaseRequest.name, schema: PurchaseRequestSchema },
+  { name: PurchaseOrder.name, schema: PurchaseOrderSchema },
+  { name: GoodsReceipt.name, schema: GoodsReceiptSchema },
+  { name: Stock.name, schema: StockSchema },
+  { name: StockMovement.name, schema: StockMovementSchema },
+  { name: BOM.name, schema: BOMSchema },
+  { name: ProductionPlan.name, schema: ProductionPlanSchema },
+  { name: WorkOrder.name, schema: WorkOrderSchema },
+  { name: MaterialIssue.name, schema: MaterialIssueSchema },
+  { name: ProductionResult.name, schema: ProductionResultSchema },
+  { name: QualityInspection.name, schema: QualityInspectionSchema },
+  { name: QualityDefect.name, schema: QualityDefectSchema },
+  { name: SalesOrder.name, schema: SalesOrderSchema },
+  { name: Delivery.name, schema: DeliverySchema },
+  { name: ApprovalWorkflow.name, schema: ApprovalWorkflowSchema },
+  { name: ApprovalStep.name, schema: ApprovalStepSchema },
+  { name: ApprovalHistory.name, schema: ApprovalHistorySchema },
+  { name: AuditLog.name, schema: AuditLogSchema },
+  { name: Notification.name, schema: NotificationSchema },
+];
 
 @Module({
   imports: [
-    TypeOrmModule.forRootAsync({
+    MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService): TypeOrmModuleOptions => {
-        const nodeEnv = configService.get<string>('NODE_ENV');
-        const options = buildDatabaseOptions({
-          NODE_ENV: nodeEnv,
+      useFactory: (configService: ConfigService) =>
+        resolveMongoConnectionOptions({
+          NODE_ENV: configService.get<string>('NODE_ENV'),
+          MONGODB_URI: configService.get<string>('MONGODB_URI'),
+          MONGO_URL: configService.get<string>('MONGO_URL'),
           DATABASE_URL: configService.get<string>('DATABASE_URL'),
-          DB_TYPE: configService.get<string>('DB_TYPE'),
-          DB_HOST: configService.get<string>('DB_HOST'),
-          DB_PORT: configService.get<string>('DB_PORT'),
-          DB_USERNAME: configService.get<string>('DB_USERNAME'),
-          DB_PASSWORD: configService.get<string>('DB_PASSWORD'),
-          DB_DATABASE: configService.get<string>('DB_DATABASE'),
-          DB_NAME: configService.get<string>('DB_NAME'),
-          DB_SSL: configService.get<string>('DB_SSL'),
-          DB_SYNCHRONIZE: configService.get<string>('DB_SYNCHRONIZE'),
-          DB_RUN_MIGRATIONS: configService.get<string>('DB_RUN_MIGRATIONS'),
-        });
-
-        if (nodeEnv === 'production' && options.synchronize) {
-          logger.warn(
-            'Database synchronize=true is active in production. Generate/run TypeORM migrations and set DB_SYNCHRONIZE=false once schema is initialized.',
-          );
-        }
-
-        return options as TypeOrmModuleOptions;
-      },
+          MONGO_DB_NAME: configService.get<string>('MONGO_DB_NAME'),
+          MONGOHOST: configService.get<string>('MONGOHOST'),
+          MONGOPORT: configService.get<string>('MONGOPORT'),
+          MONGOUSER: configService.get<string>('MONGOUSER'),
+          MONGOPASSWORD: configService.get<string>('MONGOPASSWORD'),
+          MONGODATABASE: configService.get<string>('MONGODATABASE'),
+          MONGO_INITDB_ROOT_USERNAME: configService.get<string>('MONGO_INITDB_ROOT_USERNAME'),
+          MONGO_INITDB_ROOT_PASSWORD: configService.get<string>('MONGO_INITDB_ROOT_PASSWORD'),
+        }),
     }),
-    TypeOrmModule.forFeature(entityArray),
+    MongooseModule.forFeature(MONGOOSE_FEATURES),
   ],
   providers: [DatabaseSeedService],
-  exports: [TypeOrmModule, DatabaseSeedService],
+  exports: [MongooseModule, DatabaseSeedService],
 })
 export class DatabaseModule {}

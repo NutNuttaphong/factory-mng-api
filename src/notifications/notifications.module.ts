@@ -1,12 +1,11 @@
-import { Module, Global } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { NotificationsService } from './notifications.service';
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
 import { NotificationsController } from './notifications.controller';
-import { Notification } from '../database/entities';
+import { NotificationsService } from './notifications.service';
+import { Notification, NotificationSchema } from '../database/entities/workflow-audit.entity';
 
-@Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([Notification])],
+  imports: [MongooseModule.forFeature([{ name: Notification.name, schema: NotificationSchema }])],
   controllers: [NotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

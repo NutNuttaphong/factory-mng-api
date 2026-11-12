@@ -1,122 +1,136 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument, Types } from 'mongoose';
+import { applyMongoTransform } from './schema.util';
+import type { Ref } from './schema.util';
 
-@Entity('categories')
+export type CategoryDocument = HydratedDocument<Category>;
+export type UnitDocument = HydratedDocument<Unit>;
+export type SupplierDocument = HydratedDocument<Supplier>;
+export type CustomerDocument = HydratedDocument<Customer>;
+export type WarehouseDocument = HydratedDocument<Warehouse>;
+export type ProductDocument = HydratedDocument<Product>;
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'categories' })
 export class Category {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
+  @Prop({ required: true, unique: true, trim: true })
   name: string;
 
-  @Column({ nullable: true })
-  description: string;
+  @Prop({ type: String, default: null })
+  description: string | null;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('units')
+export const CategorySchema = applyMongoTransform(SchemaFactory.createForClass(Category));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'units' })
 export class Unit {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  name: string; // e.g. KG, PCS, SET
+  @Prop({ required: true, unique: true, trim: true })
+  name: string;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('suppliers')
+export const UnitSchema = applyMongoTransform(SchemaFactory.createForClass(Unit));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'suppliers' })
 export class Supplier {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column()
+  @Prop({ required: true, trim: true })
   name: string;
 
-  @Column({ nullable: true })
-  contactName: string;
+  @Prop({ type: String, default: null })
+  contactName: string | null;
 
-  @Column({ nullable: true })
-  email: string;
+  @Prop({ type: String, default: null })
+  email: string | null;
 
-  @Column({ nullable: true })
-  phone: string;
+  @Prop({ type: String, default: null })
+  phone: string | null;
 
-  @Column({ nullable: true })
-  address: string;
+  @Prop({ type: String, default: null })
+  address: string | null;
 
-  @Column({ default: true })
+  @Prop({ default: true })
   isActive: boolean;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('customers')
+export const SupplierSchema = applyMongoTransform(SchemaFactory.createForClass(Supplier));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'customers' })
 export class Customer {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column()
+  @Prop({ required: true, trim: true })
   name: string;
 
-  @Column({ nullable: true })
-  contactName: string;
+  @Prop({ type: String, default: null })
+  contactName: string | null;
 
-  @Column({ nullable: true })
-  email: string;
+  @Prop({ type: String, default: null })
+  email: string | null;
 
-  @Column({ nullable: true })
-  phone: string;
+  @Prop({ type: String, default: null })
+  phone: string | null;
 
-  @Column({ nullable: true })
-  address: string;
+  @Prop({ type: String, default: null })
+  address: string | null;
 
-  @Column({ default: true })
+  @Prop({ default: true })
   isActive: boolean;
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('warehouses')
-export class Warehouse {
-  @PrimaryGeneratedColumn('uuid')
+export const CustomerSchema = applyMongoTransform(SchemaFactory.createForClass(Customer));
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false } })
+export class WarehouseLocation {
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. WH-A, WH-B
+  @Prop({ required: true, trim: true })
+  code: string;
 
-  @Column()
+  createdAt: Date;
+}
+
+export const WarehouseLocationSchema = applyMongoTransform(
+  SchemaFactory.createForClass(WarehouseLocation),
+);
+
+@Schema({ timestamps: { createdAt: true, updatedAt: false }, collection: 'warehouses' })
+export class Warehouse {
+  id: string;
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
+
+  @Prop({ required: true, trim: true })
   name: string;
 
-  @Column({ nullable: true })
-  location: string;
+  @Prop({ type: String, default: null })
+  location: string | null;
 
-  @OneToMany(() => WarehouseLocation, (loc) => loc.warehouse)
+  @Prop({ type: [WarehouseLocationSchema], default: [] })
   locations: WarehouseLocation[];
 
-  @CreateDateColumn()
   createdAt: Date;
 }
 
-@Entity('warehouse_locations')
-export class WarehouseLocation {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column()
-  code: string; // e.g. Row-1, Shelf-2
-
-  @ManyToOne(() => Warehouse, (wh) => wh.locations, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'warehouse_id' })
-  warehouse: Warehouse;
-
-  @CreateDateColumn()
-  createdAt: Date;
-}
+export const WarehouseSchema = applyMongoTransform(SchemaFactory.createForClass(Warehouse));
 
 export enum ProductType {
   RAW_MATERIAL = 'RAW_MATERIAL',
@@ -125,50 +139,46 @@ export enum ProductType {
   FINISHED_GOOD = 'FINISHED_GOOD',
 }
 
-@Entity('products')
+@Schema({ timestamps: true, collection: 'products' })
 export class Product {
-  @PrimaryGeneratedColumn('uuid')
   id: string;
+  _id: Types.ObjectId;
 
-  @Column({ unique: true })
-  code: string; // e.g. PRD-001
+  @Prop({ required: true, unique: true, trim: true })
+  code: string;
 
-  @Column()
+  @Prop({ required: true, trim: true })
   name: string;
 
-  @ManyToOne(() => Category, { eager: true, nullable: true })
-  @JoinColumn({ name: 'category_id' })
-  category: Category | null;
+  @Prop({ type: Types.ObjectId, ref: 'Category', default: null })
+  category: Ref<Category> | null;
 
-  @Column({ type: 'varchar', default: ProductType.RAW_MATERIAL })
+  @Prop({ type: String, enum: Object.values(ProductType), default: ProductType.RAW_MATERIAL })
   type: ProductType;
 
-  @ManyToOne(() => Unit, { eager: true, nullable: true })
-  @JoinColumn({ name: 'unit_id' })
-  unit: Unit | null;
+  @Prop({ type: Types.ObjectId, ref: 'Unit', default: null })
+  unit: Ref<Unit> | null;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Prop({ type: Number, default: 0 })
   cost: number;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Prop({ type: Number, default: 0 })
   price: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Prop({ type: Number, default: 0 })
   minimumStock: number;
 
-  @Column({ type: 'integer', default: 999999 })
+  @Prop({ type: Number, default: 999999 })
   maximumStock: number;
 
-  @ManyToOne(() => Warehouse, { eager: true, nullable: true })
-  @JoinColumn({ name: 'warehouse_id' })
-  warehouse: Warehouse | null;
+  @Prop({ type: Types.ObjectId, ref: 'Warehouse', default: null })
+  warehouse: Ref<Warehouse> | null;
 
-  @Column({ default: 'ACTIVE' })
-  status: string; // ACTIVE, INACTIVE
+  @Prop({ default: 'ACTIVE' })
+  status: string;
 
-  @CreateDateColumn()
   createdAt: Date;
-
-  @UpdateDateColumn()
   updatedAt: Date;
 }
+
+export const ProductSchema = applyMongoTransform(SchemaFactory.createForClass(Product));

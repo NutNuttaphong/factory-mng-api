@@ -1,36 +1,48 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Category, Unit, Supplier, Customer, Warehouse, WarehouseLocation, Product, ProductType } from '../database/entities/master.entity';
-import { Stock } from '../database/entities/purchasing-inventory.entity';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import {
+  Category,
+  Unit,
+  Supplier,
+  Customer,
+  Warehouse,
+  Product,
+  ProductType,
+  Stock,
+  isValidObjectId,
+} from '../database/entities';
 
 @Injectable()
 export class MasterDataService {
   constructor(
-    @InjectRepository(Product) private productRepo: Repository<Product>,
-    @InjectRepository(Category) private categoryRepo: Repository<Category>,
-    @InjectRepository(Unit) private unitRepo: Repository<Unit>,
-    @InjectRepository(Supplier) private supplierRepo: Repository<Supplier>,
-    @InjectRepository(Customer) private customerRepo: Repository<Customer>,
-    @InjectRepository(Warehouse) private whRepo: Repository<Warehouse>,
-    @InjectRepository(WarehouseLocation) private locRepo: Repository<WarehouseLocation>,
-    @InjectRepository(Stock) private stockRepo: Repository<Stock>
+    @InjectModel(Product.name) private productModel: Model<Product>,
+    @InjectModel(Category.name) private categoryModel: Model<Category>,
+    @InjectModel(Unit.name) private unitModel: Model<Unit>,
+    @InjectModel(Supplier.name) private supplierModel: Model<Supplier>,
+    @InjectModel(Customer.name) private customerModel: Model<Customer>,
+    @InjectModel(Warehouse.name) private whModel: Model<Warehouse>,
+    @InjectModel(Stock.name) private stockModel: Model<Stock>,
   ) {}
 
   // --- PRODUCTS ---
 
   async findProducts() {
-    return this.productRepo.find({
-      relations: { category: true, unit: true, warehouse: true },
-      order: { code: 'ASC' }
-    });
+    return this.productModel
+      .find()
+      .populate(['category', 'unit', 'warehouse'])
+      .sort({ code: 1 })
+      .exec();
   }
 
   async findProduct(id: string) {
-    const prod = await this.productRepo.findOne({
-      where: { id },
-      relations: { category: true, unit: true, warehouse: true }
-    });
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Product not found');
+    }
+    const prod = await this.productModel
+      .findById(id)
+      .populate(['category', 'unit', 'warehouse'])
+      .exec();
     if (!prod) throw new NotFoundException('Product not found');
     return prod;
   }
@@ -47,61 +59,66 @@ export class MasterDataService {
     maximumStock: number;
     warehouseId?: string;
   }) {
-    const exists = await this.productRepo.findOneBy({ code: dto.code });
+    const exists = await this.productModel.findOne({ code: dto.code }).exec();
     if (exists) throw new BadRequestException('Product code already exists');
 
-    const cat = await this.categoryRepo.findOneBy({ id: dto.categoryId });
-    const unit = await this.unitRepo.findOneBy({ id: dto.unitId });
-    const warehouse = dto.warehouseId ? await this.whRepo.findOneBy({ id: dto.warehouseId }) : null;
+    const cat = isValidObjectId(dto.categoryId)
+      ? await this.categoryModel.findById(dto.categoryId).exec()
+      : null;
+    const unit = isValidObjectId(dto.unitId)
+      ? await this.unitModel.findById(dto.unitId).exec()
+      : null;
+    const warehouse =
+      dto.warehouseId && isValidObjectId(dto.warehouseId)
+        ? await this.whModel.findById(dto.warehouseId).exec()
+        : null;
 
-    const prod = this.productRepo.create({
+    const created = await this.productModel.create({
       code: dto.code,
       name: dto.name,
-      category: cat,
+      category: cat?._id ?? null,
       type: dto.type,
-      unit: unit,
+      unit: unit?._id ?? null,
       cost: Number(dto.cost),
       price: Number(dto.price),
       minimumStock: Number(dto.minimumStock),
       maximumStock: Number(dto.maximumStock),
-      warehouse: warehouse,
-      status: 'ACTIVE'
+      warehouse: warehouse?._id ?? null,
+      status: 'ACTIVE',
     });
 
-    const savedProduct = await this.productRepo.save(prod);
-
-    // Auto initialize stock record
     if (warehouse) {
-      const stockExists = await this.stockRepo.findOne({
-        where: { product: { id: savedProduct.id }, warehouse: { id: warehouse.id } }
-      });
+      const stockExists = await this.stockModel
+        .findOne({ product: created._id, warehouse: warehouse._id })
+        .exec();
       if (!stockExists) {
-        await this.stockRepo.save(
-          this.stockRepo.create({
-            product: savedProduct,
-            warehouse: warehouse,
-            quantity: 0,
-            status: 'OUT'
-          })
-        );
+        await this.stockModel.create({
+          product: created._id,
+          warehouse: warehouse._id,
+          quantity: 0,
+          status: 'OUT',
+        });
       }
     }
 
-    return savedProduct;
+    return this.findProduct(created.id);
   }
 
-  async updateProduct(id: string, dto: {
-    name?: string;
-    categoryId?: string;
-    type?: ProductType;
-    unitId?: string;
-    cost?: number;
-    price?: number;
-    minimumStock?: number;
-    maximumStock?: number;
-    warehouseId?: string;
-    status?: string;
-  }) {
+  async updateProduct(
+    id: string,
+    dto: {
+      name?: string;
+      categoryId?: string;
+      type?: ProductType;
+      unitId?: string;
+      cost?: number;
+      price?: number;
+      minimumStock?: number;
+      maximumStock?: number;
+      warehouseId?: string;
+      status?: string;
+    },
+  ) {
     const prod = await this.findProduct(id);
 
     if (dto.name) prod.name = dto.name;
@@ -112,96 +129,102 @@ export class MasterDataService {
     if (dto.minimumStock !== undefined) prod.minimumStock = Number(dto.minimumStock);
     if (dto.maximumStock !== undefined) prod.maximumStock = Number(dto.maximumStock);
 
-    if (dto.categoryId) {
-      prod.category = (await this.categoryRepo.findOneBy({ id: dto.categoryId }))!;
+    if (dto.categoryId && isValidObjectId(dto.categoryId)) {
+      const cat = await this.categoryModel.findById(dto.categoryId).exec();
+      prod.category = (cat?._id ?? null) as any;
     }
-    if (dto.unitId) {
-      prod.unit = (await this.unitRepo.findOneBy({ id: dto.unitId }))!;
+    if (dto.unitId && isValidObjectId(dto.unitId)) {
+      const unit = await this.unitModel.findById(dto.unitId).exec();
+      prod.unit = (unit?._id ?? null) as any;
     }
 
-    if (dto.warehouseId) {
-      const newWh = await this.whRepo.findOneBy({ id: dto.warehouseId });
-      prod.warehouse = newWh!;
+    if (dto.warehouseId && isValidObjectId(dto.warehouseId)) {
+      const newWh = await this.whModel.findById(dto.warehouseId).exec();
+      prod.warehouse = (newWh?._id ?? null) as any;
 
-      // Auto check/initialize stock for the new warehouse
       if (newWh) {
-        const stockExists = await this.stockRepo.findOne({
-          where: { product: { id: prod.id }, warehouse: { id: newWh.id } }
-        });
+        const stockExists = await this.stockModel
+          .findOne({ product: prod._id, warehouse: newWh._id })
+          .exec();
         if (!stockExists) {
-          await this.stockRepo.save(
-            this.stockRepo.create({
-              product: prod,
-              warehouse: newWh,
-              quantity: 0,
-              status: 'OUT'
-            })
-          );
+          await this.stockModel.create({
+            product: prod._id,
+            warehouse: newWh._id,
+            quantity: 0,
+            status: 'OUT',
+          });
         }
       }
     }
 
-    return this.productRepo.save(prod);
+    await prod.save();
+    return this.findProduct(id);
   }
 
   async deleteProduct(id: string) {
     const prod = await this.findProduct(id);
-    return this.productRepo.remove(prod);
+    await this.productModel.deleteOne({ _id: prod._id }).exec();
+    return prod;
   }
 
   // --- CATEGORIES ---
-  async findCategories() { return this.categoryRepo.find({ order: { name: 'ASC' } }); }
+  async findCategories() {
+    return this.categoryModel.find().sort({ name: 1 }).exec();
+  }
   async createCategory(name: string, description?: string) {
-    return this.categoryRepo.save(this.categoryRepo.create({ name, description }));
+    return this.categoryModel.create({ name, description: description ?? null });
   }
 
   // --- UNITS ---
-  async findUnits() { return this.unitRepo.find({ order: { name: 'ASC' } }); }
+  async findUnits() {
+    return this.unitModel.find().sort({ name: 1 }).exec();
+  }
   async createUnit(name: string) {
-    return this.unitRepo.save(this.unitRepo.create({ name }));
+    return this.unitModel.create({ name });
   }
 
   // --- SUPPLIERS ---
-  async findSuppliers() { return this.supplierRepo.find({ order: { name: 'ASC' } }); }
-  async createSupplier(dto: any) { return this.supplierRepo.save(this.supplierRepo.create(dto)); }
+  async findSuppliers() {
+    return this.supplierModel.find().sort({ name: 1 }).exec();
+  }
+  async createSupplier(dto: any) {
+    return this.supplierModel.create(dto);
+  }
   async updateSupplier(id: string, dto: any) {
-    const supplier = await this.supplierRepo.findOneBy({ id });
+    if (!isValidObjectId(id)) throw new NotFoundException('Supplier not found');
+    const supplier = await this.supplierModel.findById(id).exec();
     if (!supplier) throw new NotFoundException('Supplier not found');
     Object.assign(supplier, dto);
-    return this.supplierRepo.save(supplier);
+    return supplier.save();
   }
 
   // --- CUSTOMERS ---
-  async findCustomers() { return this.customerRepo.find({ order: { name: 'ASC' } }); }
-  async createCustomer(dto: any) { return this.customerRepo.save(this.customerRepo.create(dto)); }
+  async findCustomers() {
+    return this.customerModel.find().sort({ name: 1 }).exec();
+  }
+  async createCustomer(dto: any) {
+    return this.customerModel.create(dto);
+  }
   async updateCustomer(id: string, dto: any) {
-    const customer = await this.customerRepo.findOneBy({ id });
+    if (!isValidObjectId(id)) throw new NotFoundException('Customer not found');
+    const customer = await this.customerModel.findById(id).exec();
     if (!customer) throw new NotFoundException('Customer not found');
     Object.assign(customer, dto);
-    return this.customerRepo.save(customer);
+    return customer.save();
   }
 
   // --- WAREHOUSES ---
   async findWarehouses() {
-    return this.whRepo.find({
-      relations: { locations: true },
-      order: { code: 'ASC' }
-    });
+    return this.whModel.find().sort({ code: 1 }).exec();
   }
 
   async createWarehouse(dto: { code: string; name: string; location?: string; locations?: string[] }) {
-    const wh = await this.whRepo.save(this.whRepo.create({
+    await this.whModel.create({
       code: dto.code,
       name: dto.name,
-      location: dto.location
-    }));
-
-    if (dto.locations) {
-      for (const locCode of dto.locations) {
-        await this.locRepo.save(this.locRepo.create({ code: locCode, warehouse: wh }));
-      }
-    }
-
-    return this.findWarehouses(); // Return with loaded locations
+      location: dto.location ?? null,
+      locations: (dto.locations || []).map((locCode) => ({ code: locCode })),
+    });
+    return this.findWarehouses();
   }
 }

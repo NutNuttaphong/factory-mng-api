@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, IsNull } from 'typeorm';
-import { Notification, User } from '../database/entities';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Notification, User, extractUserAccess, isValidObjectId } from '../database/entities';
 
 @Injectable()
 export class NotificationsService {
   constructor(
-    @InjectRepository(Notification) private notificationRepo: Repository<Notification>
+    @InjectModel(Notification.name) private notificationModel: Model<Notification>,
   ) {}
 
   async create(params: {
@@ -17,51 +17,53 @@ export class NotificationsService {
     entityType?: string;
     entityId?: string;
   }) {
-    const notification = this.notificationRepo.create({
+    return this.notificationModel.create({
       title: params.title,
       message: params.message,
-      recipientRole: params.recipientRole,
-      recipientId: params.recipientId,
-      entityType: params.entityType,
-      entityId: params.entityId,
-      isRead: false
+      recipientRole: params.recipientRole ?? null,
+      recipientId: params.recipientId ?? null,
+      entityType: params.entityType ?? null,
+      entityId: params.entityId ?? null,
+      isRead: false,
     });
-    return this.notificationRepo.save(notification);
   }
 
   async findForUser(user: User) {
-    const roles = user.roles.map((r) => r.name);
-    const where: any[] = [
+    const { roleNames: roles } = extractUserAccess(user);
+    const orFilters: Record<string, any>[] = [
       { recipientId: user.id },
-      { recipientId: IsNull(), recipientRole: IsNull() }
+      { recipientId: null, recipientRole: null },
     ];
     if (roles.length > 0) {
-      where.push({ recipientRole: In(roles) });
+      orFilters.push({ recipientRole: { $in: roles } });
     }
-    // Find notifications sent to:
-    // 1. Everyone (recipientRole and recipientId are null)
-    // 2. This user's roles
-    // 3. This user's ID
-    return this.notificationRepo.find({
-      where,
-      order: { createdAt: 'DESC' }
-    });
+    return this.notificationModel
+      .find({ $or: orFilters })
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async markRead(id: string, user: User) {
-    const notification = await this.notificationRepo.findOneBy({ id });
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    const notification = await this.notificationModel.findById(id).exec();
     if (!notification) throw new NotFoundException('Notification not found');
 
-    const userRoles = new Set(user.roles.map((r) => r.name));
+    const userRoles = new Set(extractUserAccess(user).roleNames);
     const isBroadcast = !notification.recipientId && !notification.recipientRole;
     const isRecipientUser = notification.recipientId === user.id;
-    const isRecipientRole = Boolean(notification.recipientRole && userRoles.has(notification.recipientRole));
+    const isRecipientRole = Boolean(
+      notification.recipientRole && userRoles.has(notification.recipientRole),
+    );
 
     if (!isBroadcast && !isRecipientUser && !isRecipientRole) {
       throw new ForbiddenException('You do not have access to this notification');
     }
 
     notification.isRead = true;
-    return this.notificationRepo.save(notification);
+    await notification.save();
+    return notification;
   }
 }

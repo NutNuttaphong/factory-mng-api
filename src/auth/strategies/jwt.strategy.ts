@@ -2,16 +2,16 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../../database/entities';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, isValidObjectId } from '../../database/entities';
 import { resolveJwtSecret } from '../jwt-secret.util';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
-    @InjectRepository(User) private userRepo: Repository<User>
+    @InjectModel(User.name) private userModel: Model<User>,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -21,10 +21,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: { sub: string; email: string; tokenVersion?: number }) {
-    const user = await this.userRepo.findOne({
-      where: { id: payload.sub, isActive: true },
-      relations: { roles: { permissions: true } },
-    });
+    if (!isValidObjectId(payload?.sub)) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+
+    const user = await this.userModel
+      .findOne({ _id: payload.sub, isActive: true })
+      .populate({ path: 'roles', populate: { path: 'permissions' } })
+      .exec();
 
     if (!user) {
       throw new UnauthorizedException('User not found or inactive');

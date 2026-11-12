@@ -1,28 +1,35 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { SalesService } from './sales.service';
+import { MongooseModule } from '@nestjs/mongoose';
 import { SalesController } from './sales.controller';
-import { InventoryModule } from '../inventory/inventory.module';
+import { SalesService } from './sales.service';
 import {
   SalesOrder,
-  SalesOrderItem,
+  SalesOrderSchema,
   Delivery,
+  DeliverySchema,
   Customer,
+  CustomerSchema,
   Product,
-  Stock
+  ProductSchema,
+  Stock,
+  StockSchema,
 } from '../database/entities';
+import { InventoryModule } from '../inventory/inventory.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      SalesOrder,
-      SalesOrderItem,
-      Delivery,
-      Customer,
-      Product,
-      Stock
+    MongooseModule.forFeature([
+      { name: SalesOrder.name, schema: SalesOrderSchema },
+      { name: Delivery.name, schema: DeliverySchema },
+      { name: Customer.name, schema: CustomerSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Stock.name, schema: StockSchema },
     ]),
     InventoryModule,
+    NotificationsModule,
+    AuditModule,
   ],
   controllers: [SalesController],
   providers: [SalesService],

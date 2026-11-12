@@ -1,11 +1,19 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { QualityInspection, QualityDefect, QAStatus } from '../database/entities/quality.entity';
-import { WorkOrder, WorkOrderStatus } from '../database/entities/production.entity';
-import { GoodsReceipt, GoodsReceiptStatus } from '../database/entities/purchasing-inventory.entity';
-import { Product, Warehouse } from '../database/entities/master.entity';
-import { User } from '../database/entities/rbac.entity';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import {
+  QualityInspection,
+  QualityDefect,
+  QAStatus,
+  WorkOrder,
+  WorkOrderStatus,
+  GoodsReceipt,
+  GoodsReceiptStatus,
+  Product,
+  User,
+  isValidObjectId,
+  refId,
+} from '../database/entities';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
@@ -13,28 +21,30 @@ import { AuditService } from '../audit/audit.service';
 @Injectable()
 export class QualityService {
   constructor(
-    @InjectRepository(QualityInspection) private qaRepo: Repository<QualityInspection>,
-    @InjectRepository(QualityDefect) private defectRepo: Repository<QualityDefect>,
-    @InjectRepository(WorkOrder) private woRepo: Repository<WorkOrder>,
-    @InjectRepository(GoodsReceipt) private grRepo: Repository<GoodsReceipt>,
-    @InjectRepository(Product) private productRepo: Repository<Product>,
+    @InjectModel(QualityInspection.name) private qaModel: Model<QualityInspection>,
+    @InjectModel(QualityDefect.name) private defectModel: Model<QualityDefect>,
+    @InjectModel(WorkOrder.name) private woModel: Model<WorkOrder>,
+    @InjectModel(GoodsReceipt.name) private grModel: Model<GoodsReceipt>,
+    @InjectModel(Product.name) private productModel: Model<Product>,
     private inventoryService: InventoryService,
     private notificationsService: NotificationsService,
-    private auditService: AuditService
+    private auditService: AuditService,
   ) {}
 
   async findInspections() {
-    return this.qaRepo.find({
-      relations: { product: true, workOrder: true, goodsReceipt: true, inspector: true },
-      order: { createdAt: 'DESC' }
-    });
+    return this.qaModel
+      .find()
+      .populate(['product', 'workOrder', 'goodsReceipt', 'inspector'])
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async getDefects() {
-    return this.defectRepo.find({
-      relations: { inspection: { product: true } },
-      order: { createdAt: 'DESC' }
-    });
+    return this.defectModel
+      .find()
+      .populate({ path: 'inspection', populate: { path: 'product' } })
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async createInspection(
@@ -52,74 +62,76 @@ export class QualityService {
       status: QAStatus;
       comment: string;
       defectsList?: Array<{ defectType: string; severity: number; description?: string }>;
-    }
+    },
   ) {
-    const product = await this.productRepo.findOneBy({ id: dto.productId });
+    if (!isValidObjectId(dto.productId)) {
+      throw new NotFoundException('Product not found');
+    }
+    const product = await this.productModel.findById(dto.productId).populate('warehouse').exec();
     if (!product) throw new NotFoundException('Product not found');
 
-    const qaCount = await this.qaRepo.count();
+    const qaCount = await this.qaModel.countDocuments().exec();
     const code = `QA-2026-${String(qaCount + 1).padStart(5, '0')}`;
 
-    let workOrder: WorkOrder | null = null;
+    let workOrder: any = null;
     if (dto.workOrderId) {
-      workOrder = await this.woRepo.findOne({ where: { id: dto.workOrderId }, relations: { product: { warehouse: true } } });
+      if (!isValidObjectId(dto.workOrderId)) {
+        throw new NotFoundException('Work Order not found');
+      }
+      workOrder = await this.woModel
+        .findById(dto.workOrderId)
+        .populate({ path: 'product', populate: { path: 'warehouse' } })
+        .exec();
       if (!workOrder) throw new NotFoundException('Work Order not found');
     }
 
-    let goodsReceipt: GoodsReceipt | null = null;
+    let goodsReceipt: any = null;
     if (dto.goodsReceiptId) {
-      goodsReceipt = await this.grRepo.findOne({ where: { id: dto.goodsReceiptId }, relations: { items: true, purchaseOrder: true } });
+      if (!isValidObjectId(dto.goodsReceiptId)) {
+        throw new NotFoundException('Goods Receipt not found');
+      }
+      goodsReceipt = await this.grModel
+        .findById(dto.goodsReceiptId)
+        .populate([{ path: 'items.product', populate: { path: 'warehouse' } }, 'purchaseOrder'])
+        .exec();
       if (!goodsReceipt) throw new NotFoundException('Goods Receipt not found');
     }
 
-    const inspection = this.qaRepo.create({
+    const savedQa = await this.qaModel.create({
       code,
-      product,
-      workOrder,
-      goodsReceipt,
-      batchNo: dto.batchNo,
-      inspector: user,
-      weight: dto.weight ? Number(dto.weight) : null,
-      size: dto.size ? Number(dto.size) : null,
-      color: dto.color,
-      temperature: dto.temperature ? Number(dto.temperature) : null,
-      defectDetails: dto.defectDetails,
+      product: product._id,
+      workOrder: workOrder?._id ?? null,
+      goodsReceipt: goodsReceipt?._id ?? null,
+      batchNo: dto.batchNo ?? null,
+      inspector: refId(user),
+      weight: dto.weight !== undefined ? Number(dto.weight) : null,
+      size: dto.size !== undefined ? Number(dto.size) : null,
+      color: dto.color ?? null,
+      temperature: dto.temperature !== undefined ? Number(dto.temperature) : null,
+      defectDetails: dto.defectDetails ?? null,
       status: dto.status,
-      comment: dto.comment
+      comment: dto.comment ?? null,
     });
 
-    const savedQa = await this.qaRepo.save(inspection);
-
-    // Save defect details if failed
     if (dto.defectsList && dto.defectsList.length > 0) {
       for (const d of dto.defectsList) {
-        await this.defectRepo.save(
-          this.defectRepo.create({
-            inspection: savedQa,
-            defectType: d.defectType,
-            severity: d.severity,
-            description: d.description
-          })
-        );
+        await this.defectModel.create({
+          inspection: savedQa._id,
+          defectType: d.defectType,
+          severity: d.severity,
+          description: d.description ?? null,
+        });
       }
     }
 
-    // --- DECISION ACTION ENGINE ---
-
     if (goodsReceipt) {
-      // Flow: Goods Receipt QA
       if (dto.status === QAStatus.PASS) {
-        // Accept and stock in
         goodsReceipt.status = GoodsReceiptStatus.QA_PASSED;
-        await this.grRepo.save(goodsReceipt);
-
-        // Put each item into stock
         for (const item of goodsReceipt.items) {
           item.quantityAccepted = item.quantityReceived;
           item.quantityRejected = 0;
 
-          // Target warehouse is the default product warehouse or PO target
-          const targetWhId = product.warehouse?.id;
+          const targetWhId = item.product?.warehouse?.id || product.warehouse?.id;
           if (targetWhId) {
             await this.inventoryService.stockIn(
               item.product.id,
@@ -127,37 +139,33 @@ export class QualityService {
               item.quantityReceived,
               'GOODS_RECEIPT_QA_PASS',
               goodsReceipt.id,
-              user
+              user,
             );
           }
         }
-        await this.grRepo.save(goodsReceipt);
+        await goodsReceipt.save();
       } else {
-        // Reject
         goodsReceipt.status = GoodsReceiptStatus.QA_FAILED;
         for (const item of goodsReceipt.items) {
           item.quantityAccepted = 0;
           item.quantityRejected = item.quantityReceived;
         }
-        await this.grRepo.save(goodsReceipt);
+        await goodsReceipt.save();
 
-        // Send alert
         await this.notificationsService.create({
           title: 'QA Inspection Failed',
           message: `Goods Receipt ${goodsReceipt.code} (PO: ${goodsReceipt.purchaseOrder?.code}) failed QA. Returned to supplier.`,
           recipientRole: 'Warehouse',
           entityType: 'QUALITY_INSPECTION',
-          entityId: savedQa.id
+          entityId: savedQa.id,
         });
       }
     } else if (workOrder) {
-      // Flow: Work Order QA
       if (dto.status === QAStatus.PASS) {
         workOrder.status = WorkOrderStatus.COMPLETED;
-        await this.woRepo.save(workOrder);
+        await workOrder.save();
 
-        // Stock in the Finished Good
-        const targetWhId = workOrder.product.warehouse?.id;
+        const targetWhId = workOrder.product?.warehouse?.id;
         if (targetWhId) {
           await this.inventoryService.stockIn(
             workOrder.product.id,
@@ -165,34 +173,34 @@ export class QualityService {
             workOrder.quantity,
             'WORK_ORDER_QA_PASS',
             workOrder.id,
-            user
+            user,
           );
         }
       } else {
-        // Failed / Rework
-        workOrder.status = WorkOrderStatus.COMPLETED; // Complete, but with defect logs
-        await this.woRepo.save(workOrder);
+        workOrder.status = WorkOrderStatus.COMPLETED;
+        await workOrder.save();
 
-        // Notify Production Manager
         await this.notificationsService.create({
           title: 'Production QA Defect Alert',
-          message: `Work Order ${workOrder.code} (${workOrder.product.name}) failed quality checks. Status: ${dto.status}.`,
+          message: `Work Order ${workOrder.code} (${workOrder.product?.name}) failed quality checks. Status: ${dto.status}.`,
           recipientRole: 'Production',
           entityType: 'QUALITY_INSPECTION',
-          entityId: savedQa.id
+          entityId: savedQa.id,
         });
       }
     }
 
-    // Audit logs
     await this.auditService.log({
       action: 'QA_INSPECTION',
       entityName: 'QualityInspection',
       entityId: savedQa.id,
       afterState: { status: dto.status, code },
-      userEmail: user.email
+      userEmail: user.email,
     });
 
-    return savedQa;
+    return this.qaModel
+      .findById(savedQa.id)
+      .populate(['product', 'workOrder', 'goodsReceipt', 'inspector'])
+      .exec();
   }
 }
