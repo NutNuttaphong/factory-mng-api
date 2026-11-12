@@ -1,0 +1,30 @@
+import { OnApplicationBootstrap } from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { User, Role, Permission } from './entities/rbac.entity';
+import { Category, Unit, Supplier, Customer, Warehouse, WarehouseLocation, Product } from './entities/master.entity';
+import { ApprovalWorkflow, ApprovalStep } from './entities/workflow-audit.entity';
+import { BOM, BOMItem, Stock } from './entities/purchasing-inventory.entity';
+export declare class DatabaseSeedService implements OnApplicationBootstrap {
+    private permRepo;
+    private roleRepo;
+    private userRepo;
+    private categoryRepo;
+    private unitRepo;
+    private supplierRepo;
+    private customerRepo;
+    private whRepo;
+    private locRepo;
+    private productRepo;
+    private bomRepo;
+    private bomItemRepo;
+    private wfRepo;
+    private stepRepo;
+    private stockRepo;
+    constructor(permRepo: Repository<Permission>, roleRepo: Repository<Role>, userRepo: Repository<User>, categoryRepo: Repository<Category>, unitRepo: Repository<Unit>, supplierRepo: Repository<Supplier>, customerRepo: Repository<Customer>, whRepo: Repository<Warehouse>, locRepo: Repository<WarehouseLocation>, productRepo: Repository<Product>, bomRepo: Repository<BOM>, bomItemRepo: Repository<BOMItem>, wfRepo: Repository<ApprovalWorkflow>, stepRepo: Repository<ApprovalStep>, stockRepo: Repository<Stock>);
+    onApplicationBootstrap(): Promise<void>;
+    private seedPermissions;
+    private seedRoles;
+    private seedUsers;
+    private seedMasterData;
+    private seedApprovalWorkflows;
+}
